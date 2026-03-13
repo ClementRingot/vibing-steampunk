@@ -47,6 +47,7 @@ nav:
   - Home: index.md
   - User Guide:
     - Getting Started: getting-started.md
+    - Multiple Systems & Clients: mcp-multi-system.md
     - Configuration: configuration.md
     - CLI Agents: cli-agents/README.md
     - Changelog: changelog.md

@@ -167,41 +167,13 @@ See [Safety Controls](features/safety.md) for details on all protection options.
 
 ---
 
-## Multiple SAP systems (CLI mode)
+## Multiple SAP systems
 
-For CLI usage with multiple systems, create `.vsp.json`:
+To connect to more than one SAP system (dev, QA, prod), or to use vsp with multiple AI clients at the same time, see the dedicated guide:
 
-```json
-{
-  "default": "dev",
-  "systems": {
-    "dev": {
-      "url": "http://dev.example.com:50000",
-      "user": "DEVELOPER",
-      "client": "001"
-    },
-    "prod": {
-      "url": "https://prod.example.com:44300",
-      "user": "READONLY",
-      "client": "100",
-      "read_only": true
-    }
-  }
-}
-```
+→ **[Multiple Systems & Clients](mcp-multi-system.md)**
 
-Set passwords via environment: `VSP_DEV_PASSWORD=...`, `VSP_PROD_PASSWORD=...`
-
-```bash
-# Use a specific system
-vsp -s dev source CLAS ZCL_MY_CLASS
-vsp -s prod search "ZCL_*"
-
-# Export package to ZIP
-vsp -s dev export '$ZPKG' -o packages.zip
-```
-
-Config locations searched in order: `.vsp.json` → `.vsp/systems.json` → `~/.vsp.json` → `~/.vsp/systems.json`
+Covers: multiple `mcpServers` entries, naming conventions, per-environment safety settings, keeping secrets out of config, and CLI multi-system profiles.
 
 ---
 
