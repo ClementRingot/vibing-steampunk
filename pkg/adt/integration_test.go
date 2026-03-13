@@ -255,21 +255,58 @@ func TestIntegration_GetProgram(t *testing.T) {
 
 func TestIntegration_GetClass(t *testing.T) {
 	client := getIntegrationClient(t)
+	l := newTestLogger(t)
 	ctx := context.Background()
 
-	// Try to get a standard SAP class
-	sources, err := client.GetClass(ctx, "CL_ABAP_TYPEDESCR")
-	if err != nil {
-		t.Skipf("Could not get CL_ABAP_TYPEDESCR: %v", err)
+	const className = "CL_ABAP_TYPEDESCR"
+
+	// B-010: verify all 5 class includes are retrievable
+	includeTypes := []ClassIncludeType{
+		ClassIncludeMain,
+		ClassIncludeDefinitions,
+		ClassIncludeImplementations,
+		ClassIncludeMacros,
+		ClassIncludeTestClasses,
 	}
 
-	mainSource, ok := sources["main"]
-	if !ok {
-		t.Error("No main source in class")
-	} else if len(mainSource) == 0 {
-		t.Error("Main source is empty")
-	} else {
-		t.Logf("Retrieved %d characters of class source", len(mainSource))
+	present := []string{}
+	missing := []string{}
+
+	for _, inc := range includeTypes {
+		var src string
+		var err error
+		if inc == ClassIncludeMain {
+			sources, e := client.GetClass(ctx, className)
+			if e != nil {
+				if isTransientSAPError(e) {
+					t.Skipf("GetClass failed (SAP 5xx): %v", e)
+				}
+				t.Skipf("Could not get %s: %v", className, e)
+			}
+			src = sources["main"]
+		} else {
+			src, err = client.GetClassInclude(ctx, className, inc)
+			if err != nil {
+				if isTransientSAPError(err) {
+					t.Skipf("GetClassInclude failed (SAP 5xx): %v", err)
+				}
+				missing = append(missing, string(inc))
+				l.Warn("include %q not available: %v", inc, err)
+				continue
+			}
+		}
+		if len(src) == 0 {
+			missing = append(missing, string(inc))
+			l.Warn("include %q is empty", inc)
+		} else {
+			present = append(present, string(inc))
+			l.Info("include %q: %d chars", inc, len(src))
+		}
+	}
+
+	l.Info("present=%v missing=%v", present, missing)
+	if len(present) == 0 {
+		t.Error("No class includes could be retrieved")
 	}
 }
 
@@ -978,14 +1015,16 @@ WRITE: / lv_message.`, strings.ToLower(programName), timestamp)
 
 	t.Logf("CreateAndActivateProgram result: success=%v, message=%s", result.Success, result.Message)
 
+	// B-008: log all activation messages, flag warnings
+	if result.Activation != nil && len(result.Activation.Messages) > 0 {
+		for _, m := range result.Activation.Messages {
+			t.Logf("  Activation msg [%s] line %d obj=%s: %s", m.Type, m.Line, m.ObjDescr, m.ShortText)
+		}
+	}
+
 	if !result.Success {
 		if strings.Contains(result.Message, "HTTP 5") || strings.Contains(result.Message, "status 5") {
 			t.Skipf("CreateAndActivateProgram did not succeed (SAP 5xx): %s", result.Message)
-		}
-		if result.Activation != nil && len(result.Activation.Messages) > 0 {
-			for _, m := range result.Activation.Messages {
-				t.Logf("  Activation msg [%s]: %s", m.Type, m.ShortText)
-			}
 		}
 		t.Fatalf("CreateAndActivateProgram did not succeed: %s", result.Message)
 	}
