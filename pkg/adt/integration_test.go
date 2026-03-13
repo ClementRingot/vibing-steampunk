@@ -2236,3 +2236,42 @@ func TestIntegration_DebugSessionAPIs(t *testing.T) {
 	t.Log("7. Step: client.DebuggerStep(DebugStepOver, \"\")")
 	t.Log("8. Detach: client.DebuggerDetach()")
 }
+
+// --- Part A6: TDD stubs for planned-but-not-yet-implemented features ---
+// These tests appear as SKIP with a [TODO] tag, providing a visible checklist.
+
+func TestIntegration_TODO_GetDomain(t *testing.T) {
+	newTestLogger(t).Todo("GetDomain not yet implemented — ADT: /sap/bc/adt/ddic/domains/{name}/source/main")
+}
+
+func TestIntegration_TODO_GetDataElement(t *testing.T) {
+	newTestLogger(t).Todo("GetDataElement not yet implemented — ADT: /sap/bc/adt/ddic/dataelements/{name}/source/main")
+}
+
+func TestIntegration_TODO_GetWhereUsed(t *testing.T) {
+	newTestLogger(t).Todo("GetWhereUsed not yet implemented — ADT: /sap/bc/adt/repository/informationsystem/usageReferences?objectName={n}&objectType={t}")
+}
+
+func TestIntegration_TODO_GetProgFullCode(t *testing.T) {
+	newTestLogger(t).Todo("GetProgFullCode not yet implemented — composite: fetch main source + recursively resolve INCLUDE statements")
+}
+
+func TestIntegration_TODO_ListObjects(t *testing.T) {
+	newTestLogger(t).Todo("ListObjects not yet implemented — extends GetPackage via /sap/bc/adt/repository/nodestructure with depth/type filters")
+}
+
+func TestIntegration_TODO_GetEnhancements(t *testing.T) {
+	newTestLogger(t).Todo("GetEnhancements not yet implemented — ADT: /sap/bc/adt/{programs|classes}/{name}/source/main/enhancements/elements")
+}
+
+func TestIntegration_TODO_GetEnhancementSpot(t *testing.T) {
+	newTestLogger(t).Todo("GetEnhancementSpot not yet implemented — ADT: /sap/bc/adt/enhancements/enhsxsb/{spot}")
+}
+
+func TestIntegration_TODO_JWTAuth(t *testing.T) {
+	newTestLogger(t).Todo("JWT/XSUAA auth not yet implemented — needed for ABAP Cloud / BTP targets (WithJWTToken option + Bearer header)")
+}
+
+func TestIntegration_TODO_CDSUnitTests(t *testing.T) {
+	newTestLogger(t).Todo("CDS unit test execution not yet implemented — complex lifecycle, follow-up after RunUnitTests stabilization")
+}
