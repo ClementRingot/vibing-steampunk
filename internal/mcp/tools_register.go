@@ -233,6 +233,26 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 		), s.handleGetCDSDependencies)
 	}
 
+	if shouldRegister("GetCDSImpactAnalysis") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSImpactAnalysis",
+			mcp.WithDescription("Retrieve CDS view REVERSE dependencies (where-used / downstream consumers). Returns all objects that consume/reference the given CDS view. Complement of GetCDSDependencies which shows forward dependencies."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (e.g., 'ZTRAVEL'). Use SearchObject to find CDS views first."),
+			),
+		), s.handleGetCDSImpactAnalysis)
+	}
+
+	if shouldRegister("GetCDSElementInfo") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSElementInfo",
+			mcp.WithDescription("Retrieve metadata for all elements (fields) of a CDS view. Returns field names, types, annotations, and semantic information from the DDL source."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (e.g., 'ZTRAVEL'). Use SearchObject to find CDS views first."),
+			),
+		), s.handleGetCDSElementInfo)
+	}
+
 	if shouldRegister("GetStructure") {
 		s.mcpServer.AddTool(mcp.NewTool("GetStructure",
 			mcp.WithDescription("Retrieve ABAP Structure"),

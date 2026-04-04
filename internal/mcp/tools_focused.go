@@ -23,7 +23,9 @@ func focusedToolSet() map[string]bool {
 		"RunQuery":           true,
 		"GetPackage":         true, // Metadata: package contents
 		"GetFunctionGroup":   true, // Metadata: function module list
-		"GetCDSDependencies": true, // CDS dependency tree
+		"GetCDSDependencies":    true, // CDS dependency tree
+		"GetCDSImpactAnalysis": true, // CDS reverse dependencies (where-used)
+		"GetCDSElementInfo":    true, // CDS element/field metadata
 		"GetMessages":        true, // Message class texts (SE91)
 
 		// Code intelligence (3)

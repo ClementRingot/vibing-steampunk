@@ -54,6 +54,10 @@ func (s *Server) routeReadAction(ctx context.Context, action, objectType, object
 				args["context_package"] = v
 			}
 			return s.callHandler(ctx, s.handleGetCDSDependencies, args)
+		case "CDS_IMPACT":
+			return s.callHandler(ctx, s.handleGetCDSImpactAnalysis, map[string]any{"view_name": objectName})
+		case "CDS_ELEMENTS":
+			return s.callHandler(ctx, s.handleGetCDSElementInfo, map[string]any{"view_name": objectName})
 		case "TABL_CONTENTS":
 			args := map[string]any{"table_name": objectName}
 			if v, ok := getFloatParam(params, "max_rows"); ok {
