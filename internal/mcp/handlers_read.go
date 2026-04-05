@@ -78,6 +78,8 @@ func (s *Server) routeReadAction(ctx context.Context, action, objectType, object
 			return s.callHandler(ctx, s.handleGetCodeCoverage, args)
 		case "CHECK_RUN":
 			return s.callHandler(ctx, s.handleGetCheckRunResults, map[string]any{"check_run_id": objectName})
+		case "API_STATE":
+			return s.callHandler(ctx, s.handleGetAPIReleaseState, map[string]any{"object_uri": objectName})
 		}
 	}
 
@@ -410,6 +412,21 @@ func (s *Server) handleGetTypeInfo(ctx context.Context, request mcp.CallToolRequ
 	}
 
 	result, _ := json.MarshalIndent(typeInfo, "", "  ")
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+func (s *Server) handleGetAPIReleaseState(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	objectURI, ok := request.Params.Arguments["object_uri"].(string)
+	if !ok || objectURI == "" {
+		return newToolResultError("object_uri is required"), nil
+	}
+
+	state, err := s.adtClient.GetAPIReleaseState(ctx, objectURI)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to get API release state: %v", err)), nil
+	}
+
+	result, _ := json.MarshalIndent(state, "", "  ")
 	return mcp.NewToolResultText(string(result)), nil
 }
 

@@ -28,6 +28,9 @@ func focusedToolSet() map[string]bool {
 		"GetCDSElementInfo":    true, // CDS element/field metadata
 		"GetMessages":        true, // Message class texts (SE91)
 
+		// Clean Core / API Release State (1)
+		"GetAPIReleaseState": true, // S/4HANA Cloud compatibility check
+
 		// Code intelligence (3)
 		"FindDefinition": true,
 		"FindReferences": true,
@@ -122,6 +125,12 @@ func focusedToolSet() map[string]bool {
 		// CTS/Transport Management (2 read-only in focused mode)
 		"ListTransports": true, // List transport requests
 		"GetTransport":   true, // Get transport details with objects
+
+		// gCTS (git-enabled Change Transport System) - read-only in focused mode
+		"GctsListRepositories": true, // List gCTS repositories
+		"GctsGetRepository":    true, // Get repository details
+		"GctsListBranches":     true, // List branches
+		"GctsGetHistory":       true, // Get commit history
 
 		// Git/abapGit Integration (via ZADT_VSP WebSocket)
 		"GitTypes":  true, // List 158 supported object types

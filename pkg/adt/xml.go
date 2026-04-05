@@ -327,6 +327,26 @@ func ExtractSourceLink(links []Link) string {
 	return ""
 }
 
+// --- API Release State Types (Clean Core / ABAP Cloud) ---
+
+// APIReleaseState represents the release state of an ABAP object for Clean Core compatibility.
+// This is used to check if an object is released for use in ABAP Cloud / S/4HANA Cloud.
+type APIReleaseState struct {
+	XMLName               xml.Name            `xml:"apiState" json:"-"`
+	ReleaseState          string              `xml:"releaseState,attr" json:"releaseState"`
+	UseInCloudDevelopment bool                `xml:"useInCloudDevelopment,attr" json:"useInCloudDevelopment"`
+	UseInKeyUserApps      bool                `xml:"useInKeyUserApps,attr" json:"useInKeyUserApps"`
+	Deprecated            *APIDeprecationInfo `xml:"deprecation,omitempty" json:"deprecation,omitempty"`
+}
+
+// APIDeprecationInfo contains deprecation details for a released API.
+type APIDeprecationInfo struct {
+	XMLName        xml.Name `xml:"deprecation" json:"-"`
+	ReleaseState   string   `xml:"releaseState,attr,omitempty" json:"releaseState,omitempty"`
+	Successor      string   `xml:"successor,attr,omitempty" json:"successor,omitempty"`
+	DeprecatedSince string  `xml:"deprecatedSince,attr,omitempty" json:"deprecatedSince,omitempty"`
+}
+
 // --- Revision (Version History) Types ---
 
 // Revision represents a single version of an ABAP object in the revision history.

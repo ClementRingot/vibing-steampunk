@@ -303,6 +303,16 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 			),
 		), s.handleGetTypeInfo)
 	}
+
+	if shouldRegister("GetAPIReleaseState") {
+		s.mcpServer.AddTool(mcp.NewTool("GetAPIReleaseState",
+			mcp.WithDescription("Check API release state for S/4HANA Clean Core / ABAP Cloud compatibility. Returns whether an object is released for cloud development and key user apps. Use SearchObject first to get the object URI."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT URI of the object (e.g., /sap/bc/adt/oo/classes/cl_abap_typedescr). Get this from SearchObject results."),
+			),
+		), s.handleGetAPIReleaseState)
+	}
 }
 
 // registerSystemTools registers system information and always-on tools.
@@ -1780,6 +1790,133 @@ func (s *Server) registerTransportTools(shouldRegister func(string) bool) {
 				mcp.Description("Transport request number"),
 			),
 		), s.handleDeleteTransport)
+	}
+}
+
+// registerGCTSTools registers gCTS (git-enabled Change Transport System) tools.
+func (s *Server) registerGCTSTools(shouldRegister func(string) bool) {
+	if shouldRegister("GctsListRepositories") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsListRepositories",
+			mcp.WithDescription("List all gCTS repositories on the SAP system. Returns repository ID, name, URL, branch, status and role."),
+		), s.handleGctsListRepositories)
+	}
+
+	if shouldRegister("GctsGetRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsGetRepository",
+			mcp.WithDescription("Get details of a specific gCTS repository including configuration."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsGetRepository)
+	}
+
+	if shouldRegister("GctsCreateRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsCreateRepository",
+			mcp.WithDescription("Create a new gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Repository name"),
+			),
+			mcp.WithString("url",
+				mcp.Required(),
+				mcp.Description("Git remote URL"),
+			),
+			mcp.WithString("branch",
+				mcp.Description("Default branch (default: main)"),
+			),
+			mcp.WithString("package",
+				mcp.Description("ABAP package (VSID)"),
+			),
+			mcp.WithString("role",
+				mcp.Description("Repository role (SOURCE or TARGET)"),
+			),
+		), s.handleGctsCreateRepository)
+	}
+
+	if shouldRegister("GctsDeleteRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsDeleteRepository",
+			mcp.WithDescription("Delete a gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsDeleteRepository)
+	}
+
+	if shouldRegister("GctsCloneRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsCloneRepository",
+			mcp.WithDescription("Clone a gCTS repository on the SAP system. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsCloneRepository)
+	}
+
+	if shouldRegister("GctsPull") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsPull",
+			mcp.WithDescription("Pull changes into a gCTS repository, optionally to a specific commit. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("commit_id",
+				mcp.Description("Commit ID to pull to (optional)"),
+			),
+		), s.handleGctsPull)
+	}
+
+	if shouldRegister("GctsCommit") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsCommit",
+			mcp.WithDescription("Create a commit in a gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("message",
+				mcp.Required(),
+				mcp.Description("Commit message"),
+			),
+		), s.handleGctsCommit)
+	}
+
+	if shouldRegister("GctsListBranches") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsListBranches",
+			mcp.WithDescription("List branches in a gCTS repository."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsListBranches)
+	}
+
+	if shouldRegister("GctsSwitchBranch") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsSwitchBranch",
+			mcp.WithDescription("Switch the active branch of a gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("branch",
+				mcp.Required(),
+				mcp.Description("Branch name to switch to"),
+			),
+		), s.handleGctsSwitchBranch)
+	}
+
+	if shouldRegister("GctsGetHistory") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsGetHistory",
+			mcp.WithDescription("Get commit history of a gCTS repository."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsGetHistory)
 	}
 }
 

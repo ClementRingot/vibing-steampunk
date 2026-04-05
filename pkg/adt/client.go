@@ -2159,3 +2159,26 @@ func parseSQLTraceDirectory(data []byte) ([]SQLTraceEntry, error) {
 	return result, nil
 }
 
+// --- API Release State (Clean Core) ---
+
+// GetAPIReleaseState retrieves the API release state for an ABAP object.
+// This checks whether the object is released for use in ABAP Cloud (S/4HANA Clean Core).
+// objectURI is the full ADT path, e.g. "/sap/bc/adt/oo/classes/cl_abap_typedescr".
+// Do NOT url-escape this — it is already a valid URI path.
+func (c *Client) GetAPIReleaseState(ctx context.Context, objectURI string) (*APIReleaseState, error) {
+	resp, err := c.transport.Request(ctx, objectURI, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/vnd.sap.adt.api.releasestate.v1+xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting API release state: %w", err)
+	}
+
+	var state APIReleaseState
+	if err := xml.Unmarshal(resp.Body, &state); err != nil {
+		return nil, fmt.Errorf("parsing API release state XML: %w", err)
+	}
+
+	return &state, nil
+}
+
