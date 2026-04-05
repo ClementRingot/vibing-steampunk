@@ -180,6 +180,8 @@ Create `.copilot/mcp-config.json` in the project folder:
 
 ## 4. OpenAI Codex CLI
 
+> **Detailed guide:** [codex.md](codex.md) -- full Codex agent configuration with SAP Q/A testing scenarios, safety setup, and example prompts.
+
 ### Install
 
 ```bash
@@ -208,15 +210,19 @@ Create `.mcp.json` in the project root (same format as Claude Code):
       "env": {
         "SAP_URL": "https://your-sap-host:44300",
         "SAP_USER": "YOUR_USER",
-        "SAP_PASSWORD": "<password>"
+        "SAP_PASSWORD": "<password>",
+        "SAP_READ_ONLY": "true"
       }
     }
   }
 }
 ```
 
+> **Safety tip:** Use `SAP_READ_ONLY=true` for Q/A testing, or `SAP_ALLOWED_OPS=RSQ` to allow read + search + query only. See [codex.md](codex.md) for full safety options.
+
 ### Links
 - GitHub: https://github.com/openai/codex
+- Detailed VSP config: [codex.md](codex.md)
 
 ---
 
