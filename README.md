@@ -21,9 +21,9 @@ Read the milestone article: **[Agentic ABAP at 100 Stars: The Numbers, The Commu
 
 The full version history is in [CHANGELOG.md](CHANGELOG.md).
 
-### Hyperfocused Mode — 1 Tool to Rule Them All
+### Hyperfocused Mode — 1 Tool to Rule Them All (Recommended)
 
-Single `SAP(action, target, params)` tool replaces up to 129 individual tool definitions.
+**Recommended for most setups.** Single `SAP(action, target, params)` tool replaces up to 147 individual tool definitions. Minimal token overhead, maximum capability.
 
 ```
 SAP(action="read",   target="CLAS ZCL_TRAVEL")
@@ -137,9 +137,9 @@ Zero dependencies, zero FFI. Pure Go, ~3.5M tokens/sec, ready for lint rules in 
 
 See [LSP setup](#abap-lsp-for-claude-code) for configuration.
 
-### WASM-to-ABAP Compiler — Run Any Language on SAP
+### WASM-to-ABAP Compiler (Research)
 
-Compile WebAssembly binaries to native ABAP. Three paths, one goal:
+Compile WebAssembly binaries to native ABAP — advanced prototype, verified on selected corpora. Three paths:
 
 ```
 .wasm binary → pkg/wasmcomp (Go)  → ABAP source files     ← AOT compiler
@@ -147,7 +147,7 @@ Compile WebAssembly binaries to native ABAP. Three paths, one goal:
 .wasm binary → zcl_wasm_compiler  → ABAP (on SAP itself!)  ← self-hosting, 785 lines
 ```
 
-**Proven on SAP A4H:** QuickJS (1,410 functions) compiled to 101K lines ABAP. abaplint parser (26.5MB) compiled to 396K lines. Self-hosting compiler parses WASM, generates ABAP, and executes via `GENERATE SUBROUTINE POOL` — all within SAP.
+**Demonstrated on SAP A4H:** QuickJS (1,410 functions) compiled to 101K lines ABAP. abaplint parser (26.5MB) compiled to 396K lines. Self-hosting compiler parses WASM, generates ABAP, and executes via `GENERATE SUBROUTINE POOL` — all within SAP. This is research/prototype work, not a production-ready toolchain.
 
 | What | Size | Status |
 |------|:----:|:------:|
@@ -188,12 +188,12 @@ See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature r
 
 | Feature | Description |
 |---------|-------------|
-| **Hyperfocused Mode** | `--mode hyperfocused`: 1 universal SAP tool, **~200 tokens** vs ~40K for 122 |
+| **Hyperfocused Mode** | `--mode hyperfocused` (recommended): 1 universal SAP tool, **~200 tokens** vs ~40K for 147 |
 | **Context Compression** | Auto-compressed dependency contracts — 7–30x compression, built-in ABAP parser |
 | **ABAP LSP** | Built-in Language Server — real-time diagnostics, go-to-definition, context push |
 | **AI Debugger** | Breakpoints, listener, attach, step, inspect stack & variables |
 | **RAP OData E2E** | Create CDS views, Service Definitions, Bindings → Publish OData services |
-| **Focused Mode** | 88 curated tools optimized for AI assistants |
+| **Focused Mode** | 100 curated tools optimized for AI assistants |
 | **AI-Powered RCA** | Root cause analysis with dumps, traces, profiler + code intelligence |
 | **DSL & Workflows** | Fluent Go API + YAML automation for CI/CD pipelines |
 | **ExecuteABAP** | Run arbitrary ABAP code via unit test wrapper |
@@ -413,7 +413,7 @@ SAP_PASSWORD=secret
 | `--user` | `SAP_USER` | Username |
 | `--password` | `SAP_PASSWORD` | Password |
 | `--client` | `SAP_CLIENT` | Client (default: 001) |
-| `--mode` | `SAP_MODE` | `focused` (default) or `expert` |
+| `--mode` | `SAP_MODE` | `hyperfocused` (recommended), `focused`, or `expert` |
 | `--cookie-file` | `SAP_COOKIE_FILE` | Netscape cookie file |
 | `--insecure` | `SAP_INSECURE` | Skip TLS verification |
 | `--terminal-id` | `SAP_TERMINAL_ID` | SAP GUI terminal ID for cross-tool debugging |
@@ -557,26 +557,26 @@ One axis, three values — `--mode` or `SAP_MODE`:
 
 ```mermaid
 graph LR
-    F["focused<br/>100 tools<br/>~14K tokens<br/><i>default</i>"] --> E["expert<br/>147 tools<br/>~40K tokens"]
-    E --> H["hyperfocused<br/>1 tool<br/>~200 tokens"]
-    style H fill:#2d6a4f,color:#fff
+    F["focused<br/>100 tools<br/>~14K tokens"] --> E["expert<br/>147 tools<br/>~40K tokens"]
+    E --> H["hyperfocused<br/>1 tool<br/>~200 tokens<br/><i>recommended</i>"]
+    style H fill:#2d6a4f,color:#fff,stroke:#4ade80,stroke-width:2px
     style F fill:#264653,color:#fff
     style E fill:#264653,color:#fff
 ```
 
-| Aspect | Focused (default) | Expert | Hyperfocused |
+| Aspect | Focused | Expert | Hyperfocused (recommended) |
 |--------|:-:|:-:|:-:|
-| **Tools** | 81 essential | 122 complete | 1 universal `SAP()` |
-| **Schema tokens** | ~14K | ~40K | ~200 |
+| **Tools** | 100 essential | 147 complete | 1 universal `SAP()` |
+| **Schema tokens** | ~14K | ~40K | **~200** |
 | **How AI calls it** | `GetSource(type, name)` | Same, + granular tools | `SAP(action, target, params)` |
 | **Documentation** | In tool schemas | In tool schemas | `SAP(action="help")` |
-| **Best for** | Large-context agents | Edge cases, debugging | Local models, fast iteration |
+| **Best for** | Legacy setups | Edge cases, debugging | **Most setups — any model, minimal overhead** |
 | **Safety controls** | All apply | All apply | All apply (same code path) |
 
 ```bash
-vsp --mode focused       # default — 88 curated tools
+vsp --mode hyperfocused  # recommended — single SAP(action, target, params) tool
+vsp --mode focused       # 100 curated tools (individual tool names)
 vsp --mode expert        # all 147 tools individually
-vsp --mode hyperfocused  # single SAP(action, target, params) tool
 ```
 
 ## DSL & Automation
@@ -792,7 +792,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 
 ## Tools Reference
 
-**52 Focused Mode Tools:**
+**Focused Mode Tools (100):**
 - **Search:** SearchObject, GrepObjects, GrepPackages
 - **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies
 - **Debugger:** DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables
@@ -844,7 +844,7 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (147 tool
 
 **vsp** is a Go rewrite with:
 - Single binary, zero dependencies
-- 62 tools (vs 13 original)
+- 147 tools (vs 13 original)
 - ~50x faster startup
 
 ## Optional: WebSocket Handler (ZADT_VSP)
@@ -911,8 +911,8 @@ make build          # Current platform
 make build-all      # All 9 platforms
 
 # Test
-go test ./...                              # Unit tests (249)
-go test -tags=integration -v ./pkg/adt/    # Integration tests (21+)
+go test ./...                              # Unit tests (821)
+go test -tags=integration -v ./pkg/adt/    # Integration tests (34+)
 ```
 
 <details>
@@ -928,7 +928,7 @@ vibing-steampunk/
 │   ├── codeintel.go          # Definition, refs, completion
 │   ├── workflows.go          # High-level workflows
 │   └── http.go               # HTTP transport (CSRF, auth)
-├── internal/mcp/server.go    # MCP tool handlers (62 tools)
+├── internal/mcp/server.go    # MCP tool handlers (147 tools)
 ├── internal/lsp/             # ABAP LSP server (diagnostics, go-to-def)
 └── pkg/dsl/                  # DSL & workflow engine
 ```
@@ -939,8 +939,8 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 122 (81 focused, 122 expert) |
-| **Unit Tests** | 270+ |
+| **Tools** | 147 (100 focused, 147 expert) |
+| **Unit Tests** | 821 |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
 <details>
@@ -974,14 +974,21 @@ vibing-steampunk/
 - [x] **abapGit Export** - WebSocket integration complete (v2.16.0) - GitTypes, GitExport tools ([Report](reports/2025-12-23-002-abapgit-websocket-integration-complete.md))
 - [ ] **abapGit Import** - Requires `ZCL_ABAPGIT_OBJECTS=>deserialize` with virtual repository
 
+### Completed (v2.36.0)
+- [x] API Release State (ARS) - `GetAPIReleaseState` tool for Clean Core compliance checks
+- [x] gCTS Integration - 10 tools for gCTS repository management
+- [x] i18n Tools - 7 tools for translation management with per-request language override
+- [x] Browser SSO - `--browser-auth` for Kerberos/SAML/Keycloak authentication
+- [x] HTTP Streamable Transport - `--transport http` for non-stdio deployments
+- [x] mcp-go v0.47.0 - Latest MCP SDK
+
 ### Planned
-- [ ] API Release State (ARS) - Contract stability checks
 - [ ] Message Server Logs
 - [ ] Background Job Management
 
 ### Future Considerations
 - [ ] AMDP Session Persistence (enable full HANA debugging)
-- [ ] **Graph Engine & Boundary Analysis** - initial `CheckBoundaries`, `GraphStats` (v2.37.0, SQL/ADT adapters pending)
+- [ ] **Graph Engine & Boundary Analysis** - initial implementation in `pkg/graph/` (boundary analysis, dynamic call detection, 11 tests); SQL/ADT adapters pending
 - [ ] Test Intelligence (smart test execution based on changes)
 - [ ] Standard API Surface Scraper
 
