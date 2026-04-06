@@ -472,13 +472,22 @@ func quoteKeys(m map[string]bool) []string {
 	return result
 }
 
-// handleImpact performs reverse-dependency impact analysis using WBCROSSGT/CROSS.
-// MCP: SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO", "max_depth": 3})
-// Optional: "edge_kinds": "CALLS,REFERENCES" (comma-separated filter)
+// handleImpact performs reverse-dependency impact analysis using WBCROSSGT/CROSS
+// with optional parser-based source augmentation.
 //
-// Data source: WBCROSSGT + CROSS tables (reverse cross-references).
-// Each hop queries "who references these objects?" up to max_depth.
-// This gives real code-level reverse dependencies, not transport co-change.
+// MCP: SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO"})
+// Optional params:
+//   - "max_depth": int (default 3, max 5)
+//   - "edge_kinds": "CALLS,REFERENCES" (comma-separated filter)
+//   - "include_source_analysis": bool (default false) — augment with parser edges
+//
+// Data sources:
+//   - WBCROSSGT + CROSS tables: reverse cross-references (backbone, always used)
+//   - Parser/source analysis (when include_source_analysis=true): fetches source of
+//     discovered objects and runs ExtractDepsFromSource to find edges that CROSS tables
+//     miss (PERFORM IN PROGRAM, local include refs, static method calls within same include).
+//     Dynamic calls (CALL FUNCTION variable) are flagged as DYNAMIC_CALL but do NOT
+//     extend the frontier since targets are unresolved.
 func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	objType := strings.ToUpper(getStringParam(args, "object_type"))
@@ -489,6 +498,10 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 	}
 	if maxDepth > 5 {
 		maxDepth = 5 // safety bound
+	}
+	includeSourceAnalysis := false
+	if v, ok := getBoolParam(args, "include_source_analysis"); ok {
+		includeSourceAnalysis = v
 	}
 
 	if objType == "" || objName == "" {
@@ -515,6 +528,11 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 		return newToolResultError(fmt.Sprintf("impact query failed: %v", err)), nil
 	}
 
+	// Optional: parser-based source augmentation
+	if includeSourceAnalysis {
+		s.augmentGraphWithParser(ctx, g)
+	}
+
 	targetNodeID := graph.NodeID(objType, objName)
 	opts := &graph.ImpactOptions{
 		MaxDepth:  maxDepth,
@@ -536,6 +554,81 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 		return newToolResultError(fmt.Sprintf("JSON marshal error: %v", err)), nil
 	}
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+// augmentGraphWithParser fetches source for source-bearing objects already in the graph
+// and adds parser-derived edges. This catches gaps that CROSS/WBCROSSGT miss:
+//   - PERFORM sub IN PROGRAM prog (cross-program call within same include)
+//   - Static method calls within the same include (no cross-include boundary)
+//   - INCLUDE statements
+//   - Dynamic calls (flagged as DYNAMIC_CALL, not treated as resolved dependencies)
+//
+// Only objects with source-bearing types (CLAS, PROG, INTF, FUGR) are fetched.
+// Parser edges are additive: they never remove or contradict CROSS/WBCROSSGT edges.
+// New target nodes discovered by the parser are added to the graph but do NOT
+// trigger further CROSS/WBCROSSGT expansion (that's the backbone's job).
+func (s *Server) augmentGraphWithParser(ctx context.Context, g *graph.Graph) {
+	// Collect source-bearing nodes already in the graph
+	type sourceTarget struct {
+		nodeID  string
+		objType string
+		objName string
+	}
+	var targets []sourceTarget
+
+	for _, n := range g.Nodes() {
+		switch n.Type {
+		case "CLAS", "PROG", "INTF", "FUGR":
+			targets = append(targets, sourceTarget{n.ID, n.Type, n.Name})
+		}
+	}
+
+	// Limit to avoid excessive source fetches
+	maxSourceFetches := 30
+	if len(targets) > maxSourceFetches {
+		targets = targets[:maxSourceFetches]
+	}
+
+	for _, t := range targets {
+		// Build ADT URL
+		objURL := buildADTObjectURL(t.objType, t.objName)
+		if objURL == "" {
+			continue
+		}
+
+		// Fetch source via GetSource with explicit type for correct dispatch
+		source, err := s.adtClient.GetSource(ctx, t.objType, t.objName, nil)
+		if err != nil || source == "" {
+			continue // best effort — skip unreadable objects
+		}
+
+		// Extract static deps
+		edges := graph.ExtractDepsFromSource(source, t.nodeID)
+		for _, e := range edges {
+			// Add target node if not already in graph
+			parts := strings.SplitN(e.To, ":", 2)
+			if len(parts) == 2 {
+				g.AddNode(&graph.Node{
+					ID:   e.To,
+					Name: parts[1],
+					Type: parts[0],
+				})
+			}
+			g.AddEdge(e)
+		}
+
+		// Extract dynamic calls (flagged, not resolved)
+		dynEdges := graph.ExtractDynamicCalls(source, t.nodeID)
+		for _, e := range dynEdges {
+			// Dynamic targets get nodes but are clearly marked
+			g.AddNode(&graph.Node{
+				ID:   e.To,
+				Name: e.To,
+				Type: "DYNAMIC",
+			})
+			g.AddEdge(e)
+		}
+	}
 }
 
 // fetchReverseDeps builds a graph of reverse dependencies via WBCROSSGT/CROSS.
