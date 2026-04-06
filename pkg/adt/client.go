@@ -259,6 +259,22 @@ func (c *Client) GetClassMethods(ctx context.Context, className string) ([]Metho
 	return structure.GetMethods(), nil
 }
 
+// GetClassObjectStructure returns the full parsed class structure (methods, attributes, types, events).
+func (c *Client) GetClassObjectStructure(ctx context.Context, className string) (*ClassObjectStructure, error) {
+	className = strings.ToUpper(className)
+
+	path := fmt.Sprintf("/sap/bc/adt/oo/classes/%s/objectstructure", url.PathEscape(className))
+	resp, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting class object structure: %w", err)
+	}
+
+	return ParseClassObjectStructure(resp.Body)
+}
+
 // GetClassMethodSource retrieves the source code of a specific method in a class.
 // Returns only the METHOD...ENDMETHOD block for the specified method.
 func (c *Client) GetClassMethodSource(ctx context.Context, className, methodName string) (string, error) {

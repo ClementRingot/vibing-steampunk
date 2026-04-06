@@ -156,6 +156,19 @@ Examples:
 	RunE: runGraphWhereUsedConfig,
 }
 
+var classSectionsCmd = &cobra.Command{
+	Use:   "class-sections <class_name>",
+	Short: "Show class structure organized by PUBLIC/PROTECTED/PRIVATE sections",
+	Long: `Read a class structure from SAP and display methods, attributes, types,
+and events organized by visibility section.
+
+Examples:
+  vsp class-sections ZCL_TRAVEL
+  vsp class-sections ZCL_TRAVEL --format json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runClassSections,
+}
+
 var renamePreviewCmd = &cobra.Command{
 	Use:   "rename-preview <type> <old_name> <new_name>",
 	Short: "Preview what references would be affected by renaming an object (read-only)",
@@ -227,6 +240,10 @@ func init() {
 	// Rename preview command (top-level)
 	renamePreviewCmd.Flags().String("format", "text", "Output format: text or json")
 	rootCmd.AddCommand(renamePreviewCmd)
+
+	// Class sections command (top-level)
+	classSectionsCmd.Flags().String("format", "text", "Output format: text or json")
+	rootCmd.AddCommand(classSectionsCmd)
 
 	// Slim command (top-level)
 	slimCmd.Flags().Bool("include-subpackages", false, "Include subpackages")
@@ -1060,6 +1077,66 @@ func runGraphCoChange(cmd *cobra.Command, args []string) error {
 	))
 	fmt.Fprintf(os.Stderr, "\n%d co-changing objects\n", len(result.CoChanges))
 	return nil
+}
+
+// --- class-sections handler ---
+
+func runClassSections(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+
+	className := strings.ToUpper(strings.TrimSpace(args[0]))
+	format, _ := cmd.Flags().GetString("format")
+	ctx := context.Background()
+
+	fmt.Fprintf(os.Stderr, "Reading structure of %s...\n", className)
+
+	// Fetch class structure via GetClassStructureElements (ADT objectstructure)
+	elements, err := fetchClassStructureElements(ctx, client, className)
+	if err != nil {
+		return fmt.Errorf("failed to read class structure: %w", err)
+	}
+
+	result := graph.ClassifySections(className, elements)
+
+	// Output
+	if format == "json" {
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	fmt.Print(graph.FormatClassSections(result))
+	return nil
+}
+
+// fetchClassStructureElements fetches the full class structure from ADT
+// and returns all elements (methods, attributes, types, events).
+func fetchClassStructureElements(ctx context.Context, client *adt.Client, className string) ([]graph.ClassStructureElement, error) {
+	structure, err := client.GetClassObjectStructure(ctx, className)
+	if err != nil {
+		return nil, err
+	}
+
+	var elements []graph.ClassStructureElement
+	for _, elem := range structure.Elements {
+		elements = append(elements, graph.ClassStructureElement{
+			Name:       elem.Name,
+			ADTType:    elem.Type,
+			Visibility: elem.Visibility,
+			Level:      elem.Level,
+		})
+	}
+	return elements, nil
 }
 
 // --- rename-preview handler ---
