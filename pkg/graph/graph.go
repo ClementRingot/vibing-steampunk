@@ -64,6 +64,9 @@ const (
 	NodeDDLS = "DDLS" // CDS view
 	NodeDEVC = "DEVC" // Package
 	NodeTYPE = "TYPE" // Data type / type pool
+	NodeTRAN = "TRAN" // Transaction code
+	NodeXSLT = "XSLT" // XSLT / Simple Transformation
+	NodeMSAG = "MSAG" // Message class
 
 	// Transport layer (MVP)
 	NodeTR = "TR" // Transport request (E070, request level only; tasks collapsed as metadata)

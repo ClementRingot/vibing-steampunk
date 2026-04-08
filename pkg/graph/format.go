@@ -127,6 +127,10 @@ func GraphToMermaid(g *Graph, scope *PackageScope) string {
 			return fmt.Sprintf("    %s[\\\"%s\"/]", id, label) // trapezoid
 		case "TABL", "TTYP", "DTEL", "DOMA":
 			return fmt.Sprintf("    %s[(\"%s\")]", id, label) // cylinder
+		case "TRAN":
+			return fmt.Sprintf("    %s>\"%s\"]", id, label) // flag/asymmetric
+		case "XSLT":
+			return fmt.Sprintf("    %s{{\"%s\"}}", id, label) // hexagon (like INTF)
 		default: // CLAS and others
 			return fmt.Sprintf("    %s[\"%s\"]", id, label) // rectangle
 		}

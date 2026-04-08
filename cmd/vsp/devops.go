@@ -1511,7 +1511,7 @@ func printCLIHealthMD(result *cliHealthResult) {
 	fmt.Printf("# Health Report: %s\n\n", scope)
 	fmt.Printf("**%s** — %s\n\n", result.Summary.Status, result.Summary.Headline)
 
-	fmt.Println("## Signals\n")
+	fmt.Print("## Signals\n\n")
 	fmt.Println("| Signal | Status | Details |")
 	fmt.Println("|--------|--------|---------|")
 	for _, key := range []string{"tests", "atc", "boundaries", "staleness"} {
@@ -1532,7 +1532,7 @@ func printCLIHealthMD(result *cliHealthResult) {
 	}
 
 	if result.TestDetails != nil && len(result.TestDetails.Classes) > 0 {
-		fmt.Println("\n## Test Details\n")
+		fmt.Print("\n## Test Details\n\n")
 		groups := groupTestsByParent(result.TestDetails.Classes)
 		for _, g := range groups {
 			fmt.Printf("### %s\n\n", g.label)
@@ -1564,7 +1564,7 @@ func printCLIHealthMD(result *cliHealthResult) {
 	}
 
 	if result.ATCDetails != nil && len(result.ATCDetails.Objects) > 0 {
-		fmt.Println("\n## ATC Findings\n")
+		fmt.Print("\n## ATC Findings\n\n")
 		for _, obj := range result.ATCDetails.Objects {
 			if len(obj.Findings) == 0 {
 				continue
@@ -1593,7 +1593,7 @@ func printCrossingsMD(report *graph.CrossingReport) {
 	if report == nil || len(report.Entries) == 0 {
 		return
 	}
-	fmt.Println("\n## Boundary Crossings\n")
+	fmt.Print("\n## Boundary Crossings\n\n")
 
 	dirOrder := []graph.CrossingDirection{
 		graph.CrossSibling, graph.CrossDownward, graph.CrossCommonDown,
@@ -1629,7 +1629,7 @@ func printCrossingsMD(report *graph.CrossingReport) {
 	}
 
 	if len(report.Circular) > 0 {
-		fmt.Println("### Circular Dependencies\n")
+		fmt.Print("### Circular Dependencies\n\n")
 		for _, c := range report.Circular {
 			fmt.Printf("- %s\n", c)
 		}
