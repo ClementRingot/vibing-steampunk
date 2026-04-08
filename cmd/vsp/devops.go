@@ -1116,27 +1116,36 @@ func printCLIHealth(result *cliHealthResult, details bool) {
 		return
 	}
 
-	// Detailed test results
+	// Detailed test results — grouped by parent object
 	if result.TestDetails != nil && len(result.TestDetails.Classes) > 0 {
 		fmt.Printf("\n--- Test Details ---\n\n")
-		for _, class := range result.TestDetails.Classes {
-			fmt.Printf("  %s\n", class.Name)
-			for _, method := range class.TestMethods {
-				status := "PASS"
-				if len(method.Alerts) > 0 {
-					status = "FAIL"
+		groups := groupTestsByParent(result.TestDetails.Classes)
+		for _, g := range groups {
+			fmt.Printf("  %s\n", g.label)
+			for _, class := range g.classes {
+				className := class.Name
+				if className == "" {
+					className = "(anonymous)"
 				}
-				fmt.Printf("    %-4s  %s (%.3fs)\n", status, method.Name, method.ExecutionTime)
-				for _, alert := range method.Alerts {
-					fmt.Printf("          %s: %s\n", alert.Kind, alert.Title)
-					for _, d := range alert.Details {
-						fmt.Printf("            %s\n", d)
+				fmt.Printf("    %s\n", className)
+				for _, method := range class.TestMethods {
+					status := "PASS"
+					if len(method.Alerts) > 0 {
+						status = "FAIL"
+					}
+					fmt.Printf("      %-4s  %s (%.3fs)\n", status, method.Name, method.ExecutionTime)
+					for _, alert := range method.Alerts {
+						fmt.Printf("            %s: %s\n", alert.Kind, alert.Title)
+						for _, d := range alert.Details {
+							fmt.Printf("              %s\n", d)
+						}
 					}
 				}
+				for _, alert := range class.Alerts {
+					fmt.Printf("      ALERT %s: %s\n", alert.Kind, alert.Title)
+				}
 			}
-			for _, alert := range class.Alerts {
-				fmt.Printf("    ALERT %s: %s\n", alert.Kind, alert.Title)
-			}
+			fmt.Println()
 		}
 	}
 
@@ -1156,10 +1165,46 @@ func printCLIHealth(result *cliHealthResult, details bool) {
 				case 2:
 					prio = "WARN"
 				}
-				fmt.Printf("    %-5s  %s — %s\n", prio, f.CheckTitle, f.MessageTitle)
+				loc := ""
+				if f.Location != "" {
+					loc = " @ " + f.Location
+				}
+				fmt.Printf("    %-5s  %s — %s%s\n", prio, f.CheckTitle, f.MessageTitle, loc)
 			}
 		}
 	}
+}
+
+type testGroup struct {
+	label   string
+	classes []adt.UnitTestClass
+}
+
+func groupTestsByParent(classes []adt.UnitTestClass) []testGroup {
+	order := []string{}
+	groups := map[string]*testGroup{}
+	for _, c := range classes {
+		key := c.ParentName
+		if key == "" {
+			key = "(unknown)"
+		}
+		g, ok := groups[key]
+		if !ok {
+			label := key
+			if c.ParentType != "" {
+				label = c.ParentType + " " + key
+			}
+			g = &testGroup{label: label}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.classes = append(g.classes, c)
+	}
+	result := make([]testGroup, 0, len(order))
+	for _, k := range order {
+		result = append(result, *groups[k])
+	}
+	return result
 }
 
 func printCLIHealthMD(result *cliHealthResult) {
@@ -1192,24 +1237,33 @@ func printCLIHealthMD(result *cliHealthResult) {
 
 	if result.TestDetails != nil && len(result.TestDetails.Classes) > 0 {
 		fmt.Println("\n## Test Details\n")
-		for _, class := range result.TestDetails.Classes {
-			fmt.Printf("### %s\n\n", class.Name)
-			fmt.Println("| Method | Status | Time | Details |")
-			fmt.Println("|--------|--------|------|---------|")
-			for _, method := range class.TestMethods {
-				status := "PASS"
-				detail := ""
-				if len(method.Alerts) > 0 {
-					status = "FAIL"
-					titles := make([]string, 0, len(method.Alerts))
-					for _, a := range method.Alerts {
-						titles = append(titles, a.Title)
-					}
-					detail = strings.Join(titles, "; ")
+		groups := groupTestsByParent(result.TestDetails.Classes)
+		for _, g := range groups {
+			fmt.Printf("### %s\n\n", g.label)
+			for _, class := range g.classes {
+				className := class.Name
+				if className == "" {
+					className = "(anonymous)"
 				}
-				fmt.Printf("| %s | %s | %.3fs | %s |\n", method.Name, status, method.ExecutionTime, detail)
+				fmt.Printf("#### %s\n\n", className)
+				fmt.Println("| Method | Status | Time | Details |")
+				fmt.Println("|--------|--------|------|---------|")
+				for _, method := range class.TestMethods {
+					status := "PASS"
+					detail := ""
+					if len(method.Alerts) > 0 {
+						status = "FAIL"
+						parts := make([]string, 0)
+						for _, a := range method.Alerts {
+							parts = append(parts, fmt.Sprintf("%s: %s", a.Kind, a.Title))
+							parts = append(parts, a.Details...)
+						}
+						detail = strings.Join(parts, "; ")
+					}
+					fmt.Printf("| %s | %s | %.3fs | %s |\n", method.Name, status, method.ExecutionTime, detail)
+				}
+				fmt.Println()
 			}
-			fmt.Println()
 		}
 	}
 
@@ -1220,8 +1274,8 @@ func printCLIHealthMD(result *cliHealthResult) {
 				continue
 			}
 			fmt.Printf("### %s %s\n\n", obj.Type, obj.Name)
-			fmt.Println("| Priority | Check | Message |")
-			fmt.Println("|----------|-------|---------|")
+			fmt.Println("| Priority | Check | Message | Location |")
+			fmt.Println("|----------|-------|---------|----------|")
 			for _, f := range obj.Findings {
 				prio := "Info"
 				switch f.Priority {
@@ -1230,7 +1284,7 @@ func printCLIHealthMD(result *cliHealthResult) {
 				case 2:
 					prio = "Warning"
 				}
-				fmt.Printf("| %s | %s | %s |\n", prio, f.CheckTitle, f.MessageTitle)
+				fmt.Printf("| %s | %s | %s | %s |\n", prio, f.CheckTitle, f.MessageTitle, f.Location)
 			}
 			fmt.Println()
 		}
@@ -1289,23 +1343,34 @@ func printCLIHealthHTML(result *cliHealthResult) {
 
 	if result.TestDetails != nil && len(result.TestDetails.Classes) > 0 {
 		fmt.Println("<h2>Test Details</h2>")
-		for _, class := range result.TestDetails.Classes {
-			fmt.Printf("<h3>%s</h3>\n", class.Name)
-			fmt.Println("<table><tr><th>Method</th><th>Status</th><th>Time</th><th>Details</th></tr>")
-			for _, method := range class.TestMethods {
-				status := "PASS"
-				detail := ""
-				if len(method.Alerts) > 0 {
-					status = "FAIL"
-					titles := make([]string, 0, len(method.Alerts))
-					for _, a := range method.Alerts {
-						titles = append(titles, a.Title)
-					}
-					detail = strings.Join(titles, "; ")
+		groups := groupTestsByParent(result.TestDetails.Classes)
+		for _, g := range groups {
+			fmt.Printf("<h3>%s</h3>\n", g.label)
+			for _, class := range g.classes {
+				className := class.Name
+				if className == "" {
+					className = "(anonymous)"
 				}
-				fmt.Printf("<tr><td>%s</td><td class=%q>%s</td><td>%.3fs</td><td>%s</td></tr>\n", method.Name, status, status, method.ExecutionTime, detail)
+				fmt.Printf("<h4>%s</h4>\n", className)
+				fmt.Println("<table><tr><th>Method</th><th>Status</th><th>Time</th><th>Details</th></tr>")
+				for _, method := range class.TestMethods {
+					status := "PASS"
+					detail := ""
+					if len(method.Alerts) > 0 {
+						status = "FAIL"
+						parts := make([]string, 0)
+						for _, a := range method.Alerts {
+							parts = append(parts, fmt.Sprintf("<strong>%s:</strong> %s", a.Kind, a.Title))
+							for _, d := range a.Details {
+								parts = append(parts, d)
+							}
+						}
+						detail = strings.Join(parts, "<br>")
+					}
+					fmt.Printf("<tr><td>%s</td><td class=%q>%s</td><td>%.3fs</td><td>%s</td></tr>\n", method.Name, status, status, method.ExecutionTime, detail)
+				}
+				fmt.Println("</table>")
 			}
-			fmt.Println("</table>")
 		}
 	}
 
@@ -1316,7 +1381,7 @@ func printCLIHealthHTML(result *cliHealthResult) {
 				continue
 			}
 			fmt.Printf("<h3>%s %s (%d findings)</h3>\n", obj.Type, obj.Name, len(obj.Findings))
-			fmt.Println("<table><tr><th>Priority</th><th>Check</th><th>Message</th></tr>")
+			fmt.Println("<table><tr><th>Priority</th><th>Check</th><th>Message</th><th>Location</th></tr>")
 			for _, f := range obj.Findings {
 				prio := "Info"
 				prioClass := "prio-info"
@@ -1328,7 +1393,7 @@ func printCLIHealthHTML(result *cliHealthResult) {
 					prio = "Warning"
 					prioClass = "prio-warn"
 				}
-				fmt.Printf("<tr><td class=%q>%s</td><td>%s</td><td>%s</td></tr>\n", prioClass, prio, f.CheckTitle, f.MessageTitle)
+				fmt.Printf("<tr><td class=%q>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>\n", prioClass, prio, f.CheckTitle, f.MessageTitle, f.Location)
 			}
 			fmt.Println("</table>")
 		}
