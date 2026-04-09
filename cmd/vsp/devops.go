@@ -534,6 +534,15 @@ func init() {
 	boundariesCmd.Flags().String("report", "", "Save report to file: md or filename.md")
 	boundariesCmd.Flags().Bool("exact", false, "Check only the exact package, no subpackages")
 	rootCmd.AddCommand(boundariesCmd)
+
+	trBoundariesCmd.Flags().String("format", "text", "Output format: text or json")
+	rootCmd.AddCommand(trBoundariesCmd)
+
+	crBoundariesCmd.Flags().String("format", "text", "Output format: text or json")
+	rootCmd.AddCommand(crBoundariesCmd)
+
+	crHistoryCmd.Flags().String("format", "text", "Output format: text or json")
+	rootCmd.AddCommand(crHistoryCmd)
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(transportCmd)
 	rootCmd.AddCommand(contextCmd)
@@ -544,7 +553,418 @@ func init() {
 	transportCmd.AddCommand(transportGetCmd)
 }
 
+var trBoundariesCmd = &cobra.Command{
+	Use:   "tr-boundaries <transport> [transport...]",
+	Short: "Check transport self-consistency (are all dependencies included?)",
+	Long: `Analyze whether a transport (or set of transports) carries all the objects
+it depends on. Reports missing custom dependencies, standard SAP references,
+and dynamic calls.
+
+Examples:
+  vsp tr-boundaries A4HK900001
+  vsp tr-boundaries A4HK900001 A4HK900002
+  vsp tr-boundaries A4HK900001 --format json`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runTRBoundaries,
+}
+
+var crBoundariesCmd = &cobra.Command{
+	Use:   "cr-boundaries <cr-id>",
+	Short: "Check change request self-consistency via E070A attribute",
+	Long: `Resolve all transports for a change request (via E070A transport attribute),
+then check if they collectively carry all required dependencies.
+
+Requires transport_attribute to be configured (.vsp.json or SAP_TRANSPORT_ATTRIBUTE env).
+
+Examples:
+  vsp cr-boundaries JIRA-123
+  vsp cr-boundaries JIRA-123 --format json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runCRBoundaries,
+}
+
+var crHistoryCmd = &cobra.Command{
+	Use:   "cr-history <type> <name>",
+	Short: "List all CRs where an object was touched",
+	Long: `Find all change requests that touched an object, derived from transport
+history (E071) and transport attributes (E070A). Includes both R3TR and LIMU entries.
+
+Requires transport_attribute to be configured for CR grouping.
+
+Examples:
+  vsp cr-history CLAS ZCL_MY_CLASS
+  vsp cr-history PROG ZTEST_PROGRAM
+  vsp cr-history CLAS ZCL_MY_CLASS --format json`,
+	Args: cobra.ExactArgs(2),
+	RunE: runCRHistory,
+}
+
 // --- handler implementations ---
+
+func runTRBoundaries(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+	format, _ := cmd.Flags().GetString("format")
+
+	trList := make([]string, len(args))
+	for i, a := range args {
+		trList[i] = strings.ToUpper(strings.TrimSpace(a))
+	}
+
+	report, err := analyzeTRBoundariesCLI(context.Background(), client, trList)
+	if err != nil {
+		return err
+	}
+
+	switch format {
+	case "json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+	default:
+		printTRBoundariesText(report)
+	}
+	return nil
+}
+
+func runCRBoundaries(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+	format, _ := cmd.Flags().GetString("format")
+
+	crID := strings.TrimSpace(args[0])
+	attr := params.TransportAttribute
+	if attr == "" {
+		return fmt.Errorf("transport_attribute not configured. Set SAP_TRANSPORT_ATTRIBUTE or transport_attribute in .vsp.json")
+	}
+
+	// Resolve transports from CR
+	fmt.Fprintf(os.Stderr, "Resolving transports for CR %s (attribute: %s)...\n", crID, attr)
+	attrQuery := fmt.Sprintf(
+		"SELECT TRKORR FROM E070A WHERE ATTRIBUTE = '%s' AND REFERENCE = '%s'",
+		attr, crID)
+	attrResult, err := client.RunQuery(context.Background(), attrQuery, 500)
+	if err != nil {
+		return fmt.Errorf("E070A query failed: %v", err)
+	}
+
+	var trList []string
+	for _, row := range attrResult.Rows {
+		tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+		if tr != "" {
+			trList = append(trList, tr)
+		}
+	}
+	if len(trList) == 0 {
+		fmt.Printf("No transports found for CR %s\n", crID)
+		return nil
+	}
+
+	// Also get child tasks
+	reqQuoted := make([]string, len(trList))
+	for i, tr := range trList {
+		reqQuoted[i] = "'" + tr + "'"
+	}
+	taskQuery := fmt.Sprintf("SELECT TRKORR FROM E070 WHERE STRKORR IN (%s)", strings.Join(reqQuoted, ","))
+	taskResult, err := client.RunQuery(context.Background(), taskQuery, 500)
+	if err == nil && taskResult != nil {
+		for _, row := range taskResult.Rows {
+			tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+			if tr != "" {
+				trList = append(trList, tr)
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Found %d transports for CR %s\n", len(trList), crID)
+
+	report, err := analyzeTRBoundariesCLI(context.Background(), client, trList)
+	if err != nil {
+		return err
+	}
+	report.Scope = fmt.Sprintf("CR:%s (%s)", crID, attr)
+
+	switch format {
+	case "json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+	default:
+		printTRBoundariesText(report)
+	}
+	return nil
+}
+
+func runCRHistory(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+	format, _ := cmd.Flags().GetString("format")
+
+	objType := strings.ToUpper(args[0])
+	objName := strings.ToUpper(args[1])
+	attr := params.TransportAttribute
+
+	// Query E071 for R3TR + LIMU
+	e071Query := fmt.Sprintf(
+		"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE "+
+			"(PGMID = 'R3TR' AND OBJECT = '%s' AND OBJ_NAME = '%s') OR "+
+			"(PGMID = 'LIMU' AND OBJ_NAME LIKE '%s%%')",
+		objType, objName, objName)
+	e071Result, err := client.RunQuery(context.Background(), e071Query, 500)
+	if err != nil {
+		return fmt.Errorf("E071 query failed: %v", err)
+	}
+
+	trSet := make(map[string]bool)
+	for _, row := range e071Result.Rows {
+		tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+		if tr != "" {
+			trSet[tr] = true
+		}
+	}
+
+	if len(trSet) == 0 {
+		fmt.Printf("No transports found for %s %s\n", objType, objName)
+		return nil
+	}
+
+	// Resolve task→request
+	trQuoted := make([]string, 0, len(trSet))
+	for tr := range trSet {
+		trQuoted = append(trQuoted, "'"+tr+"'")
+	}
+	e070Query := fmt.Sprintf("SELECT TRKORR, STRKORR, AS4USER, AS4DATE FROM E070 WHERE TRKORR IN (%s)", strings.Join(trQuoted, ","))
+	e070Result, _ := client.RunQuery(context.Background(), e070Query, 500)
+
+	requestSet := make(map[string]bool)
+	trMeta := make(map[string]struct{ user, date string })
+	if e070Result != nil {
+		for _, row := range e070Result.Rows {
+			tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+			parent := strings.TrimSpace(fmt.Sprintf("%v", row["STRKORR"]))
+			user := strings.TrimSpace(fmt.Sprintf("%v", row["AS4USER"]))
+			date := strings.TrimSpace(fmt.Sprintf("%v", row["AS4DATE"]))
+			trMeta[tr] = struct{ user, date string }{user, date}
+			if parent != "" {
+				requestSet[parent] = true
+			} else {
+				requestSet[tr] = true
+			}
+		}
+	}
+
+	type crEntry struct {
+		crID       string
+		transports []string
+		users      map[string]bool
+		dates      map[string]bool
+	}
+	var crEntries []crEntry
+
+	// Look up CRs via E070A if attribute configured
+	if attr != "" && len(requestSet) > 0 {
+		reqList := make([]string, 0, len(requestSet))
+		for r := range requestSet {
+			reqList = append(reqList, "'"+r+"'")
+		}
+		attrQuery := fmt.Sprintf("SELECT TRKORR, REFERENCE FROM E070A WHERE ATTRIBUTE = '%s' AND TRKORR IN (%s)", attr, strings.Join(reqList, ","))
+		attrResult, err := client.RunQuery(context.Background(), attrQuery, 500)
+		if err == nil && attrResult != nil {
+			crMap := make(map[string]*crEntry)
+			for _, row := range attrResult.Rows {
+				tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+				ref := strings.TrimSpace(fmt.Sprintf("%v", row["REFERENCE"]))
+				if ref == "" {
+					continue
+				}
+				e, ok := crMap[ref]
+				if !ok {
+					e = &crEntry{crID: ref, users: make(map[string]bool), dates: make(map[string]bool)}
+					crMap[ref] = e
+				}
+				e.transports = append(e.transports, tr)
+				if meta, ok := trMeta[tr]; ok {
+					e.users[meta.user] = true
+					e.dates[meta.date] = true
+				}
+			}
+			for _, e := range crMap {
+				crEntries = append(crEntries, *e)
+			}
+		}
+	}
+
+	switch format {
+	case "json":
+		result := map[string]any{
+			"object_type": objType,
+			"object_name": objName,
+			"attribute":   attr,
+			"transports":  trSet,
+			"crs":         crEntries,
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(data))
+	default:
+		fmt.Printf("CR History: %s %s\n", objType, objName)
+		fmt.Printf("Transports: %d found\n", len(trSet))
+		for tr := range trSet {
+			meta := trMeta[tr]
+			fmt.Printf("  %s  %s  %s\n", tr, meta.user, meta.date)
+		}
+		if len(crEntries) > 0 {
+			fmt.Printf("\nChange Requests (attribute: %s):\n", attr)
+			for _, e := range crEntries {
+				users := make([]string, 0, len(e.users))
+				for u := range e.users {
+					users = append(users, u)
+				}
+				fmt.Printf("  %s  transports: %s  users: %s\n", e.crID, strings.Join(e.transports, ","), strings.Join(users, ","))
+			}
+		} else if attr != "" {
+			fmt.Printf("\nNo CRs found for attribute %s\n", attr)
+		} else {
+			fmt.Printf("\nNo transport_attribute configured — set SAP_TRANSPORT_ATTRIBUTE for CR grouping\n")
+		}
+	}
+	return nil
+}
+
+func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []string) (*graph.TransportBoundaryReport, error) {
+	// Step 1: Get objects
+	trQuoted := make([]string, len(trList))
+	for i, tr := range trList {
+		trQuoted[i] = "'" + strings.ToUpper(tr) + "'"
+	}
+	e071Query := fmt.Sprintf(
+		"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE PGMID = 'R3TR' AND TRKORR IN (%s)",
+		strings.Join(trQuoted, ","))
+	e071Result, err := client.RunQuery(ctx, e071Query, 2000)
+	if err != nil {
+		return nil, fmt.Errorf("E071 query failed: %v", err)
+	}
+
+	trSet := make(map[string]bool)
+	for _, tr := range trList {
+		trSet[strings.ToUpper(tr)] = true
+	}
+
+	type objKey struct{ objType, objName string }
+	objectSet := make(map[objKey]bool)
+	scopeObjects := make(map[string]bool)
+
+	for _, row := range e071Result.Rows {
+		objType := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"])))
+		objName := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])))
+		if objType == "" || objName == "" {
+			continue
+		}
+		objectSet[objKey{objType, objName}] = true
+		scopeObjects[graph.NodeID(objType, objName)] = true
+	}
+
+	if len(objectSet) == 0 {
+		return &graph.TransportBoundaryReport{
+			Scope:       strings.Join(trList, ","),
+			ObjectCount: 0,
+			Summary:     graph.TransportBoundarySummary{SelfConsistent: true},
+		}, nil
+	}
+
+	scope := &graph.TransportScope{
+		Label:      strings.Join(trList, ","),
+		Transports: trSet,
+		Objects:    scopeObjects,
+	}
+
+	// Step 2: Build dependency graph
+	g := graph.New()
+	maxObjects := 50
+	count := 0
+
+	for obj := range objectSet {
+		if count >= maxObjects {
+			break
+		}
+		nodeID := graph.NodeID(obj.objType, obj.objName)
+		g.AddNode(&graph.Node{ID: nodeID, Name: obj.objName, Type: obj.objType})
+
+		if obj.objType != "CLAS" && obj.objType != "PROG" && obj.objType != "FUGR" && obj.objType != "INTF" {
+			continue
+		}
+
+		fmt.Fprintf(os.Stderr, "  Analyzing %s %s...\n", obj.objType, obj.objName)
+		source, err := client.GetSource(ctx, obj.objType, obj.objName, nil)
+		if err != nil {
+			continue
+		}
+
+		edges := graph.ExtractDepsFromSource(source, nodeID)
+		dynEdges := graph.ExtractDynamicCalls(source, nodeID)
+		for _, e := range append(edges, dynEdges...) {
+			g.AddEdge(e)
+			g.AddNode(&graph.Node{
+				ID:   e.To,
+				Name: strings.SplitN(e.To, ":", 2)[1],
+				Type: strings.SplitN(e.To, ":", 2)[0],
+			})
+		}
+		count++
+	}
+
+	// Resolve packages
+	resolvePackagesCLI(ctx, client, g)
+
+	return graph.AnalyzeTransportBoundaries(g, scope), nil
+}
+
+func printTRBoundariesText(report *graph.TransportBoundaryReport) {
+	status := "SELF-CONSISTENT"
+	if !report.Summary.SelfConsistent {
+		status = "INCOMPLETE"
+	}
+	fmt.Printf("Transport Boundaries: %s\n", report.Scope)
+	fmt.Printf("Status: %s\n", status)
+	fmt.Printf("Objects: %d | Deps: %d (in-scope: %d, missing: %d, standard: %d, dynamic: %d)\n\n",
+		report.ObjectCount, report.Summary.TotalDeps,
+		report.Summary.InScope, report.Summary.Missing,
+		report.Summary.Standard, report.Summary.Dynamic)
+
+	if len(report.Missing) > 0 {
+		fmt.Println("MISSING (custom objects not in transport):")
+		fmt.Println("  Source                → Target                  Edge        Package")
+		fmt.Println("  ────────────────────  ──────────────────────── ─────────── ────────────")
+		for _, e := range report.Missing {
+			fmt.Printf("  %-4s %-16s → %-4s %-18s %-11s %s\n",
+				e.SourceType, e.SourceName, e.TargetType, e.TargetName, e.EdgeKind, e.TargetPackage)
+		}
+		fmt.Println()
+	}
+
+	if len(report.Dynamic) > 0 {
+		fmt.Println("DYNAMIC (unresolved calls):")
+		for _, e := range report.Dynamic {
+			fmt.Printf("  %-4s %-16s → %s\n", e.SourceType, e.SourceName, e.RefDetail)
+		}
+		fmt.Println()
+	}
+}
 
 func runSourceWrite(cmd *cobra.Command, args []string) error {
 	params, err := resolveSystemParams(cmd)
@@ -959,7 +1379,7 @@ func runHealth(cmd *cobra.Command, args []string) error {
 		case "md":
 			printCLIHealthMD(result)
 		case "html":
-			printCLIHealthHTML(result)
+			printCLIHealthHTML(result, details)
 		}
 
 		os.Stdout = origStdout
@@ -977,7 +1397,7 @@ func runHealth(cmd *cobra.Command, args []string) error {
 	case "md":
 		printCLIHealthMD(result)
 	case "html":
-		printCLIHealthHTML(result)
+		printCLIHealthHTML(result, details)
 	default:
 		printCLIHealth(result, details)
 	}
@@ -1654,7 +2074,7 @@ func printCrossingsMD(report *graph.CrossingReport) {
 	}
 }
 
-func printCLIHealthHTML(result *cliHealthResult) {
+func printCLIHealthHTML(result *cliHealthResult, details bool) {
 	scope := result.Scope.Package
 	if scope == "" {
 		scope = result.Scope.ObjectType + " " + result.Scope.ObjectName
@@ -1678,13 +2098,33 @@ func printCLIHealthHTML(result *cliHealthResult) {
   .prio-error { color: #c62828; font-weight: bold; }
   .prio-warn { color: #ef6c00; }
   .prio-info { color: #1565c0; }
+  nav.toc { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1.2em; margin-bottom: 1.5em; }
+  nav.toc summary { font-weight: bold; cursor: pointer; }
+  nav.toc ul { margin: 0.5em 0 0; padding-left: 1.5em; }
+  nav.toc li { margin: 0.2em 0; }
+  nav.toc a { text-decoration: none; color: #1565c0; }
+  nav.toc a:hover { text-decoration: underline; }
 </style>
 </head><body>`)
 
 	fmt.Printf("<h1>Health Report: %s</h1>\n", scope)
 	fmt.Printf("<p><strong class=%q>%s</strong> — %s</p>\n", result.Summary.Status, result.Summary.Status, result.Summary.Headline)
 
-	fmt.Println("<h2>Signals</h2>")
+	// Table of contents
+	fmt.Println(`<nav class="toc"><details open><summary>Contents</summary><ul>`)
+	fmt.Println(`<li><a href="#signals">Signals</a></li>`)
+	if result.TestDetails != nil && len(result.TestDetails.Classes) > 0 {
+		fmt.Println(`<li><a href="#tests">Test Details</a></li>`)
+	}
+	if result.ATCDetails != nil && len(result.ATCDetails.Objects) > 0 {
+		fmt.Println(`<li><a href="#atc">ATC Findings</a></li>`)
+	}
+	if result.CrossingDetails != nil && len(result.CrossingDetails.Entries) > 0 {
+		fmt.Println(`<li><a href="#boundaries">Boundary Crossings</a></li>`)
+	}
+	fmt.Println(`</ul></details></nav>`)
+
+	fmt.Println(`<h2 id="signals">Signals</h2>`)
 	fmt.Println("<table><tr><th>Signal</th><th>Status</th><th>Details</th></tr>")
 	for _, key := range []string{"tests", "atc", "boundaries", "staleness"} {
 		sig, ok := result.Signals[key]
@@ -1705,11 +2145,46 @@ func printCLIHealthHTML(result *cliHealthResult) {
 	fmt.Println("</table>")
 
 	if result.TestDetails != nil && len(result.TestDetails.Classes) > 0 {
-		fmt.Println("<h2>Test Details</h2>")
+		if details {
+			fmt.Println(`<h2 id="tests">Test Details</h2>`)
+		} else {
+			fmt.Println(`<h2 id="tests">Failing Tests</h2>`)
+		}
 		groups := groupTestsByParent(result.TestDetails.Classes)
 		for _, g := range groups {
+			// Without --details, skip groups that have no failures
+			if !details {
+				hasFailures := false
+				for _, class := range g.classes {
+					for _, method := range class.TestMethods {
+						if len(method.Alerts) > 0 {
+							hasFailures = true
+							break
+						}
+					}
+					if hasFailures {
+						break
+					}
+				}
+				if !hasFailures {
+					continue
+				}
+			}
 			fmt.Printf("<h3>%s</h3>\n", g.label)
 			for _, class := range g.classes {
+				// Without --details, skip classes with no failures
+				if !details {
+					hasClassFailures := false
+					for _, method := range class.TestMethods {
+						if len(method.Alerts) > 0 {
+							hasClassFailures = true
+							break
+						}
+					}
+					if !hasClassFailures {
+						continue
+					}
+				}
 				className := class.Name
 				if className == "" {
 					className = "(anonymous)"
@@ -1730,6 +2205,10 @@ func printCLIHealthHTML(result *cliHealthResult) {
 						}
 						detail = strings.Join(parts, "<br>")
 					}
+					// Without --details, only show failing methods
+					if !details && status == "PASS" {
+						continue
+					}
 					fmt.Printf("<tr><td>%s</td><td class=%q>%s</td><td>%.3fs</td><td>%s</td></tr>\n", method.Name, status, status, method.ExecutionTime, detail)
 				}
 				fmt.Println("</table>")
@@ -1738,7 +2217,7 @@ func printCLIHealthHTML(result *cliHealthResult) {
 	}
 
 	if result.ATCDetails != nil && len(result.ATCDetails.Objects) > 0 {
-		fmt.Println("<h2>ATC Findings</h2>")
+		fmt.Println(`<h2 id="atc">ATC Findings</h2>`)
 		for _, obj := range result.ATCDetails.Objects {
 			if len(obj.Findings) == 0 {
 				continue
@@ -1764,7 +2243,7 @@ func printCLIHealthHTML(result *cliHealthResult) {
 
 	// Crossing details
 	if result.CrossingDetails != nil && len(result.CrossingDetails.Entries) > 0 {
-		fmt.Println("<h2>Boundary Crossings</h2>")
+		fmt.Println(`<h2 id="boundaries">Boundary Crossings</h2>`)
 		dirOrder := []graph.CrossingDirection{
 			graph.CrossSibling, graph.CrossDownward, graph.CrossCommonDown,
 			graph.CrossExternal, graph.CrossUpward, graph.CrossUpwardSkip, graph.CrossCommon,
