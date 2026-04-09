@@ -539,10 +539,12 @@ func init() {
 	boundariesCmd.Flags().Bool("exact", false, "Check only the exact package, no subpackages")
 	rootCmd.AddCommand(boundariesCmd)
 
-	trBoundariesCmd.Flags().String("format", "text", "Output format: text or json")
+	trBoundariesCmd.Flags().String("format", "text", "Output format: text, json, or html")
+	trBoundariesCmd.Flags().String("report", "", "Generate report file: html or filename.html")
 	rootCmd.AddCommand(trBoundariesCmd)
 
-	crBoundariesCmd.Flags().String("format", "text", "Output format: text or json")
+	crBoundariesCmd.Flags().String("format", "text", "Output format: text, json, or html")
+	crBoundariesCmd.Flags().String("report", "", "Generate report file: html or filename.html")
 	rootCmd.AddCommand(crBoundariesCmd)
 
 	crHistoryCmd.Flags().String("format", "text", "Output format: text or json")
@@ -716,8 +718,6 @@ func runTRBoundaries(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	format, _ := cmd.Flags().GetString("format")
-
 	trList := make([]string, len(args))
 	for i, a := range args {
 		trList[i] = strings.ToUpper(strings.TrimSpace(a))
@@ -728,14 +728,7 @@ func runTRBoundaries(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch format {
-	case "json":
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Println(string(data))
-	default:
-		printTRBoundariesText(report)
-	}
-	return nil
+	return outputTRBoundaries(cmd, report)
 }
 
 func runCRBoundaries(cmd *cobra.Command, args []string) error {
@@ -747,7 +740,6 @@ func runCRBoundaries(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	format, _ := cmd.Flags().GetString("format")
 
 	crID := strings.TrimSpace(args[0])
 	attr := params.TransportAttribute
@@ -801,14 +793,7 @@ func runCRBoundaries(cmd *cobra.Command, args []string) error {
 	}
 	report.Scope = fmt.Sprintf("CR:%s (%s)", crID, attr)
 
-	switch format {
-	case "json":
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Println(string(data))
-	default:
-		printTRBoundariesText(report)
-	}
-	return nil
+	return outputTRBoundaries(cmd, report)
 }
 
 func runCRHistory(cmd *cobra.Command, args []string) error {
@@ -1098,6 +1083,142 @@ func printTRBoundariesText(report *graph.TransportBoundaryReport) {
 		}
 		fmt.Println()
 	}
+}
+
+func outputTRBoundaries(cmd *cobra.Command, report *graph.TransportBoundaryReport) error {
+	format, _ := cmd.Flags().GetString("format")
+	reportFlag, _ := cmd.Flags().GetString("report")
+
+	// --report: resolve format and filename
+	if reportFlag != "" {
+		if strings.HasSuffix(reportFlag, ".html") {
+			format = "html"
+		} else if strings.HasSuffix(reportFlag, ".json") {
+			format = "json"
+		} else if reportFlag == "html" || reportFlag == "json" {
+			format = reportFlag
+			reportFlag = strings.ReplaceAll(report.Scope, ":", "_") + "." + format
+		} else {
+			return fmt.Errorf("unsupported report format %q (want html or json)", reportFlag)
+		}
+		f, err := os.Create(reportFlag)
+		if err != nil {
+			return fmt.Errorf("creating report file: %w", err)
+		}
+		defer f.Close()
+		origStdout := os.Stdout
+		os.Stdout = f
+		defer func() { os.Stdout = origStdout }()
+	}
+
+	switch format {
+	case "json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+	case "html":
+		printTRBoundariesHTML(report)
+	default:
+		printTRBoundariesText(report)
+	}
+
+	if reportFlag != "" {
+		fmt.Fprintf(os.Stderr, "Report saved to %s\n", reportFlag)
+	}
+	return nil
+}
+
+func printTRBoundariesHTML(report *graph.TransportBoundaryReport) {
+	status := "SELF-CONSISTENT"
+	statusClass := "PASS"
+	if !report.Summary.SelfConsistent {
+		status = "INCOMPLETE"
+		statusClass = "FAIL"
+	}
+
+	fmt.Printf(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>Transport Boundaries: %s</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1100px; margin: 2em auto; padding: 0 1em; color: #333; }
+  h1 { border-bottom: 2px solid #ddd; padding-bottom: 0.3em; }
+  h2 { margin-top: 1.5em; color: #555; }
+  table { border-collapse: collapse; width: 100%%; margin: 1em 0; }
+  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 0.9em; }
+  th { background: #f5f5f5; }
+  .PASS { color: #2e7d32; } .FAIL { color: #c62828; } .WARN { color: #ef6c00; }
+  .summary { display: flex; gap: 2em; margin: 1em 0; }
+  .summary .box { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1.2em; }
+  .summary .num { font-size: 1.5em; font-weight: bold; }
+  nav.toc { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1.2em; margin-bottom: 1.5em; }
+  nav.toc summary { font-weight: bold; cursor: pointer; }
+  nav.toc ul { margin: 0.5em 0 0; padding-left: 1.5em; }
+  nav.toc li { margin: 0.2em 0; }
+  nav.toc a { text-decoration: none; color: #1565c0; }
+</style>
+</head><body>
+`, report.Scope)
+
+	fmt.Printf("<h1>Transport Boundaries: %s</h1>\n", report.Scope)
+	fmt.Printf("<p><strong class=%q>%s</strong></p>\n", statusClass, status)
+
+	// TOC
+	fmt.Println(`<nav class="toc"><details open><summary>Contents</summary><ul>`)
+	fmt.Println(`<li><a href="#summary">Summary</a></li>`)
+	if len(report.Missing) > 0 {
+		fmt.Println(`<li><a href="#missing">Missing Dependencies</a></li>`)
+	}
+	if len(report.Standard) > 0 {
+		fmt.Println(`<li><a href="#standard">Standard SAP References</a></li>`)
+	}
+	if len(report.Dynamic) > 0 {
+		fmt.Println(`<li><a href="#dynamic">Dynamic Calls</a></li>`)
+	}
+	fmt.Println(`</ul></details></nav>`)
+
+	// Summary
+	fmt.Println(`<h2 id="summary">Summary</h2>`)
+	fmt.Println(`<div class="summary">`)
+	fmt.Printf("<div class=\"box\"><div class=\"num\">%d</div>Objects</div>\n", report.ObjectCount)
+	fmt.Printf("<div class=\"box\"><div class=\"num\">%d</div>In-Scope</div>\n", report.Summary.InScope)
+	fmt.Printf("<div class=\"box\"><div class=\"num %s\">%d</div>Missing</div>\n",
+		map[bool]string{true: "PASS", false: "FAIL"}[report.Summary.Missing == 0], report.Summary.Missing)
+	fmt.Printf("<div class=\"box\"><div class=\"num\">%d</div>Standard</div>\n", report.Summary.Standard)
+	fmt.Printf("<div class=\"box\"><div class=\"num\">%d</div>Dynamic</div>\n", report.Summary.Dynamic)
+	fmt.Println(`</div>`)
+
+	// Missing
+	if len(report.Missing) > 0 {
+		fmt.Printf("<h2 id=\"missing\" class=\"FAIL\">Missing Dependencies (%d)</h2>\n", len(report.Missing))
+		fmt.Println("<table><tr><th>Source</th><th>Target</th><th>Edge</th><th>Target Package</th></tr>")
+		for _, e := range report.Missing {
+			fmt.Printf("<tr><td>%s %s</td><td>%s %s</td><td>%s</td><td>%s</td></tr>\n",
+				e.SourceType, e.SourceName, e.TargetType, e.TargetName, e.EdgeKind, e.TargetPackage)
+		}
+		fmt.Println("</table>")
+	}
+
+	// Standard
+	if len(report.Standard) > 0 {
+		fmt.Printf("<h2 id=\"standard\">Standard SAP References (%d)</h2>\n", len(report.Standard))
+		fmt.Println("<table><tr><th>Source</th><th>Target</th><th>Edge</th></tr>")
+		for _, e := range report.Standard {
+			fmt.Printf("<tr><td>%s %s</td><td>%s %s</td><td>%s</td></tr>\n",
+				e.SourceType, e.SourceName, e.TargetType, e.TargetName, e.EdgeKind)
+		}
+		fmt.Println("</table>")
+	}
+
+	// Dynamic
+	if len(report.Dynamic) > 0 {
+		fmt.Printf("<h2 id=\"dynamic\" class=\"WARN\">Dynamic Calls (%d)</h2>\n", len(report.Dynamic))
+		fmt.Println("<table><tr><th>Source</th><th>Detail</th></tr>")
+		for _, e := range report.Dynamic {
+			fmt.Printf("<tr><td>%s %s</td><td>%s</td></tr>\n", e.SourceType, e.SourceName, e.RefDetail)
+		}
+		fmt.Println("</table>")
+	}
+
+	fmt.Println("</body></html>")
 }
 
 func runSourceWrite(cmd *cobra.Command, args []string) error {
