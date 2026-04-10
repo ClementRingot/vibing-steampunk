@@ -87,13 +87,13 @@ func runAPISurface(cmd *cobra.Command, args []string) error {
 			}
 			releaseState := ""
 			if state.C1 != nil && state.C1.Status.State != "" {
-				releaseState = strings.ToUpper(strings.TrimSpace(releaseState))
+				releaseState = strings.ToUpper(strings.TrimSpace(state.C1.Status.State))
 			}
 			if releaseState != "RELEASED" {
 				continue
 			}
 
-			result.TopAPIs[i].ReleaseState = strings.ToUpper(releaseState)
+			result.TopAPIs[i].ReleaseState = releaseState
 			result.ByReleaseState[result.TopAPIs[i].ReleaseState]++
 		}
 	}
