@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.38.3] - 2026-04-11
+### Bug Fixes
+
+- Pass cookies to WebSocket client for browser-auth mode ([`0fcfbb3`](https://github.com/oisee/vibing-steampunk/commit/0fcfbb3099c39f15d3f060be955c608553dc4312))
+- Pass cookies in remaining WebSocket callers (server.go, cli.go) ([`a4d018f`](https://github.com/oisee/vibing-steampunk/commit/a4d018fbe419a2b33b0efff6a7c580d2ce349270))
+
+
+
 ## [2.38.2] - 2026-04-11
 ### Bug Fixes
 
