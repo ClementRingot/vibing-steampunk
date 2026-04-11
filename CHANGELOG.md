@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.38.2] - 2026-04-11
+### Bug Fixes
+
+- Health tests signal now scans full package hierarchy ([`9ebc9db`](https://github.com/oisee/vibing-steampunk/commit/9ebc9db969689ce812e03218ef33dc8a84d011f0))
+- Health report filename uses _ for $ prefix in package names ([`a2bccfe`](https://github.com/oisee/vibing-steampunk/commit/a2bccfe83044d360e2523a62e1edfa15a99e7fdd))
+- Pad progress lines with %-40s to prevent display artifacts ([`13ebb80`](https://github.com/oisee/vibing-steampunk/commit/13ebb803704159408355b60e67a95d6f60822b4d))
+- External crossings now detected + TADIR resolution batched ([`387bae1`](https://github.com/oisee/vibing-steampunk/commit/387bae1c008e3aae21520628dc3639d6b29477b9))
+- Resolve more targets + deduplicate crossing entries ([`52f8743`](https://github.com/oisee/vibing-steampunk/commit/52f8743d7b935cdafedec902e672e747006a1dd2))
+- EXTERNAL crossings are WARN, not OK ([`890bb77`](https://github.com/oisee/vibing-steampunk/commit/890bb77ecc9a1a6dac2744695ea9f46030121e72))
+- Resolve default system from .vsp.json and fix packageExists false negatives ([`81416d3`](https://github.com/oisee/vibing-steampunk/commit/81416d3703f62dec20ffc83a29d2c769adf0579b))
+- TADIR package resolution now fetches OBJECT type and validates existence ([`012db57`](https://github.com/oisee/vibing-steampunk/commit/012db578dc1798013b7a15675f53df2f2af25a89))
+- Two-pass package resolution (TADIR + TFDIR) and what-package debug command ([`b0e37c6`](https://github.com/oisee/vibing-steampunk/commit/b0e37c6eee215aae291d6d691b23a41744068e2d))
+- What-package command now resolves FMs via TFDIR fallback ([`3a191b6`](https://github.com/oisee/vibing-steampunk/commit/3a191b6a95ad40f8bc960f658e94632b5d26ecc1))
+- TADIR batch size reduced to 5 to stay under SAP 255-char query limit ([`1e8b239`](https://github.com/oisee/vibing-steampunk/commit/1e8b2393b4828d05c9f2bf9adf650b25980b7538))
+- Never fail silently — add WARN stderr logging for all resolve/query errors ([`7687d38`](https://github.com/oisee/vibing-steampunk/commit/7687d386c53293981e89584c119433266e4d9a31))
+- Batch all SAP IN-clause queries to 5 items (255-char limit) ([`5049e07`](https://github.com/oisee/vibing-steampunk/commit/5049e0769ed7dec932737f0c944d3286b1f9a6e6))
+- Fixed wrong parameter ([`c736611`](https://github.com/oisee/vibing-steampunk/commit/c736611ed6677c1c690cb817ccd130775668996c))
+- Fix GetDependencyZip ([`7870cae`](https://github.com/oisee/vibing-steampunk/commit/7870caef7fdcae6acfbad928a8b19738242962c0))
+- Fixed APIGetReleaseState ([`5fa30ff`](https://github.com/oisee/vibing-steampunk/commit/5fa30ff162f6f9799ff64f26b6704044a8331c13))
+- Correct releaseState bug and update tests for C0-C4 API structure ([`a66bcd5`](https://github.com/oisee/vibing-steampunk/commit/a66bcd5f5bafd876fa9d0f090daaf45f821b40b8))
+
+
+### Features
+
+- Health --details, --format md/html, --report for file output ([`bf36bce`](https://github.com/oisee/vibing-steampunk/commit/bf36bce900d41b263568a4679bbd482f0e1621d7))
+- Health report groups tests by parent object, shows alert details ([`b5061a1`](https://github.com/oisee/vibing-steampunk/commit/b5061a15812ffd3f2e2fdd498607ed421c4148ca))
+- Directional package boundary crossing analysis ([`53fb790`](https://github.com/oisee/vibing-steampunk/commit/53fb790d4b31d084abfbd2a54231af3f564a67f8))
+- Standalone vsp boundaries command + crossing details in health reports ([`2dff9a2`](https://github.com/oisee/vibing-steampunk/commit/2dff9a23ab3aeeeefd856415828346accbd87147))
+- Crossing entries show edge kind, ref detail, and object types ([`698884e`](https://github.com/oisee/vibing-steampunk/commit/698884e4cb3ea43c5088bd3e46ed2cca64a93489))
+- Separate columns in crossing reports + package name guesser ([`952be05`](https://github.com/oisee/vibing-steampunk/commit/952be05dac54fb9cec5e9becdc35aec351c5ec91))
+- Mermaid graph output with package subgraphs and edge coloring ([`8a60b62`](https://github.com/oisee/vibing-steampunk/commit/8a60b62641f2cbe395fe745d9f861860b9c3350c))
+- Extract CALL TRANSACTION, CALL TRANSFORMATION, LEAVE TO TRANSACTION ([`8254536`](https://github.com/oisee/vibing-steampunk/commit/82545360f0d27954f27e37c979f85749de0bc263))
+- Side effect extraction + LUW classification (Phase 1) ([`11c2253`](https://github.com/oisee/vibing-steampunk/commit/11c2253aee103a6b402a4a9454d7b6636276636f))
+- Graph export formats — DOT, PlantUML, GraphML ([`91b49f1`](https://github.com/oisee/vibing-steampunk/commit/91b49f105cc8f1b7e5859669e88a5bf2fd275180))
+- Cache config support in .vsp.json and env vars ([`7c8dfbc`](https://github.com/oisee/vibing-steampunk/commit/7c8dfbc114518488fb74ef52e0617c1e3b59a4cf))
+- CR-level co-change expansion via E070A transport attributes ([`ade71be`](https://github.com/oisee/vibing-steampunk/commit/ade71be48a6253d56952c3a35da1cb0f9d7dad82))
+- CO_TRANSPORTED edge kind for weaker co-change impact signals ([`8565769`](https://github.com/oisee/vibing-steampunk/commit/8565769f352145179bc310d757237c0adef2f6d3))
+- Tr-boundaries, cr-boundaries, cr-history + HTML report TOC and test filtering ([`fc99eb3`](https://github.com/oisee/vibing-steampunk/commit/fc99eb33b527bd5a5a03c1d45111349572c09226))
+- Default mode changed from focused to hyperfocused ([`880aa68`](https://github.com/oisee/vibing-steampunk/commit/880aa6879c9e534a4e34e52f1e6e42593b6d019b))
+- --report html for tr-boundaries and cr-boundaries ([`2115afb`](https://github.com/oisee/vibing-steampunk/commit/2115afb215a5e25650610a59cd7f4b5aee35908e))
+- --details flag for tr/cr-boundaries shows cross-package deps within scope ([`1e8034a`](https://github.com/oisee/vibing-steampunk/commit/1e8034a1cc54eda520116888b14bb72618300b2a))
+- Add XCO_CP_I18N translation support via ZADT_VSP WebSocket ([`0a40d8f`](https://github.com/oisee/vibing-steampunk/commit/0a40d8fb08e9f178bbc8589e317a6b1974609bbf))
+
+
+
 ## [2.38.1] - 2026-04-07
 ### Bug Fixes
 
