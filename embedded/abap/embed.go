@@ -30,6 +30,9 @@ var ZclVspGitService string
 //go:embed zcl_vsp_report_service.clas.abap
 var ZclVspReportService string
 
+//go:embed zcl_vsp_i18n_service.clas.abap
+var ZclVspI18NService string
+
 //go:embed zcl_vsp_apc_handler.clas.abap
 var ZclVspApcHandler string
 
@@ -99,6 +102,13 @@ func GetObjects() []ObjectInfo {
 			Name:        "ZCL_VSP_REPORT_SERVICE",
 			Source:      ZclVspReportService,
 			Description: "Report domain - background job execution with spool output",
+			Optional:    false,
+		},
+		{
+			Type:        "CLAS",
+			Name:        "ZCL_VSP_I18N_SERVICE",
+			Source:      ZclVspI18NService,
+			Description: "I18N domain - full translation coverage via XCO_CP_I18N (requires SAP_BASIS >= 7.57)",
 			Optional:    false,
 		},
 		{
