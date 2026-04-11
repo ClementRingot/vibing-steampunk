@@ -14,6 +14,24 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
+// routeI18nAction routes "i18n" sub-actions for XCO-based translation operations.
+func (s *Server) routeI18nAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "i18n" {
+		return nil, false, nil
+	}
+	switch objectType {
+	case "GET_TRANSLATION":
+		return s.callHandler(ctx, s.handleGetTranslationXCO, params)
+	case "SET_TRANSLATION":
+		return s.callHandler(ctx, s.handleSetTranslationXCO, params)
+	case "LIST_LANGUAGES":
+		return s.callHandler(ctx, s.handleListLanguages, params)
+	case "COMPARE_TRANSLATIONS":
+		return s.callHandler(ctx, s.handleCompareTranslationsXCO, params)
+	}
+	return nil, false, nil
+}
+
 // handleGetTranslationXCO reads translated texts for any ABAP object via XCO_CP_I18N.
 func (s *Server) handleGetTranslationXCO(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if errResult := s.ensureWSConnected(ctx, "GetTranslationXCO"); errResult != nil {
