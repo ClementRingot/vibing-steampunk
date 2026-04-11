@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.38.4] - 2026-04-11
+### Features
+
+- Expose i18n/translation tools via unified SAP action router ([`538228b`](https://github.com/oisee/vibing-steampunk/commit/538228b3cf0a127b09779556b6a4f40ef906a88d))
+
+
+
 ## [2.38.3] - 2026-04-11
 ### Bug Fixes
 
