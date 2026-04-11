@@ -123,6 +123,7 @@ func runDebug(cmd *cobra.Command, args []string) error {
 		cfg.Username,
 		cfg.Password,
 		cfg.InsecureSkipVerify,
+		cfg.Cookies,
 	)
 
 	// Try to connect WebSocket (optional - falls back to HTTP if unavailable)

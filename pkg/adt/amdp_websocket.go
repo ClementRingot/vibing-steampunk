@@ -33,9 +33,9 @@ type AMDPEvent struct {
 }
 
 // NewAMDPWebSocketClient creates a new WebSocket-based AMDP client.
-func NewAMDPWebSocketClient(baseURL, client, user, password string, insecure bool) *AMDPWebSocketClient {
+func NewAMDPWebSocketClient(baseURL, client, user, password string, insecure bool, cookies map[string]string) *AMDPWebSocketClient {
 	c := &AMDPWebSocketClient{
-		BaseWebSocketClient: NewBaseWebSocketClient(baseURL, client, user, password, insecure),
+		BaseWebSocketClient: NewBaseWebSocketClient(baseURL, client, user, password, insecure, cookies),
 		Events:              make(chan *AMDPEvent, 10),
 	}
 

@@ -50,6 +50,7 @@ func (s *Server) handleAMDPDebuggerStart(ctx context.Context, request mcp.CallTo
 		s.config.Username,
 		s.config.Password,
 		s.config.InsecureSkipVerify,
+		s.config.Cookies,
 	)
 
 	// Connect to ZADT_VSP WebSocket

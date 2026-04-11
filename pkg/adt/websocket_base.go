@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,7 @@ type BaseWebSocketClient struct {
 	user     string
 	password string
 	insecure bool
+	cookies  map[string]string
 
 	conn      *websocket.Conn
 	sessionID string
@@ -45,13 +47,14 @@ type BaseWebSocketClient struct {
 }
 
 // NewBaseWebSocketClient creates a new base WebSocket client.
-func NewBaseWebSocketClient(baseURL, client, user, password string, insecure bool) *BaseWebSocketClient {
+func NewBaseWebSocketClient(baseURL, client, user, password string, insecure bool, cookies map[string]string) *BaseWebSocketClient {
 	return &BaseWebSocketClient{
 		baseURL:   baseURL,
 		client:    client,
 		user:      user,
 		password:  password,
 		insecure:  insecure,
+		cookies:   cookies,
 		pending:   make(map[string]chan *WSResponse),
 		welcomeCh: make(chan struct{}, 1),
 	}
@@ -84,7 +87,16 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	}
 
 	header := http.Header{}
-	header.Set("Authorization", basicAuth(c.user, c.password))
+	if c.user != "" && c.password != "" {
+		header.Set("Authorization", basicAuth(c.user, c.password))
+	} else if len(c.cookies) > 0 {
+		// Use cookie-based authentication (browser-auth mode)
+		var cookieParts []string
+		for name, value := range c.cookies {
+			cookieParts = append(cookieParts, name+"="+value)
+		}
+		header.Set("Cookie", strings.Join(cookieParts, "; "))
+	}
 
 	// Try 1: Direct Basic Auth (works on most SAP systems)
 	dialer := websocket.Dialer{
