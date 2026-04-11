@@ -159,5 +159,9 @@ func focusedToolSet() map[string]bool {
 		"GetMessageClassTexts":     true, // Get message class texts in specific language
 		"GetTextPool":              true, // Get text pool entries in specific language
 		"CompareLanguages":         true, // Compare object texts between two languages
+
+		// XCO i18n tools — full coverage incl. DDLS/DDLX (require ZADT_VSP i18n service)
+		"GetTranslationXCO": true, // Read translations via XCO: data_element, domain, DDLS, DDLX, ...
+		"ListLanguages":     true, // List all SAP languages installed in the system
 	}
 }

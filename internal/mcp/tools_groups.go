@@ -54,9 +54,12 @@ func toolGroups() map[string][]string {
 			"RunReport",
 		},
 		"N": { // i18n/Translation tools
+			// ADT REST-based tools
 			"GetObjectTextsInLanguage", "GetDataElementLabels", "GetMessageClassTexts",
 			"WriteMessageClassTexts", "WriteDataElementLabels",
 			"GetTextPool", "CompareLanguages",
+			// XCO-based tools (require ZADT_VSP WebSocket + i18n service deployed)
+			"GetTranslationXCO", "SetTranslationXCO", "ListLanguages", "CompareTranslationsXCO",
 		},
 	}
 	// Map "U" to same tools as "5"

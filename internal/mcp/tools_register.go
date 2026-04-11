@@ -2415,4 +2415,119 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 			),
 		), s.handleCompareObjectLanguages)
 	}
+
+	// --- XCO-based i18n tools (require ZADT_VSP with i18n service deployed) ---
+
+	if shouldRegister("GetTranslationXCO") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTranslationXCO",
+			mcp.WithDescription("Get translated texts for any ABAP object using XCO_CP_I18N via WebSocket. "+
+				"Covers types not reachable via ADT REST: data_definition (CDS/DDLS), metadata_extension (DDLX), domain fixed values. "+
+				"Also works for: data_element, message_class, text_pool. Requires ZADT_VSP with i18n service deployed."),
+			mcp.WithString("target_type",
+				mcp.Required(),
+				mcp.Description("Target type: data_element, domain, data_definition, metadata_extension, message_class, text_pool"),
+			),
+			mcp.WithString("object_name",
+				mcp.Required(),
+				mcp.Description("Object name in uppercase (e.g., ZFIRST_NAME, ZVACATION_REQUEST)"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (E=English, D=German, F=French, etc.)"),
+			),
+			mcp.WithString("field_name",
+				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate)"),
+			),
+			mcp.WithString("fixed_value",
+				mcp.Description("Fixed value lower limit for domain targets (e.g., DE)"),
+			),
+			mcp.WithString("message_number",
+				mcp.Description("Message number for message_class targets (e.g., 005)"),
+			),
+			mcp.WithString("text_symbol_id",
+				mcp.Description("Text symbol ID for text_pool targets (e.g., 001)"),
+			),
+			mcp.WithString("text_pool_owner_type",
+				mcp.Description("Owner type for text_pool: class or function_group (default: class)"),
+			),
+		), s.handleGetTranslationXCO)
+	}
+
+	if shouldRegister("SetTranslationXCO") {
+		s.mcpServer.AddTool(mcp.NewTool("SetTranslationXCO",
+			mcp.WithDescription("Write translated texts for any ABAP object using XCO_CP_I18N via WebSocket. "+
+				"Requires a transport request. Supports: data_element, domain, data_definition, message_class, text_pool. "+
+				"Requires ZADT_VSP with i18n service deployed."),
+			mcp.WithString("target_type",
+				mcp.Required(),
+				mcp.Description("Target type: data_element, domain, data_definition, message_class, text_pool"),
+			),
+			mcp.WithString("object_name",
+				mcp.Required(),
+				mcp.Description("Object name in uppercase (e.g., ZFIRST_NAME)"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (E=English, D=German, F=French, etc.)"),
+			),
+			mcp.WithString("transport",
+				mcp.Required(),
+				mcp.Description("Transport request number (e.g., A4HK900123)"),
+			),
+			mcp.WithString("texts",
+				mcp.Required(),
+				mcp.Description(`JSON array of attribute/value pairs, e.g.: [{"attribute":"short_field_label","value":"Vorname"},{"attribute":"long_field_label","value":"Vorname"}]`),
+			),
+			mcp.WithString("field_name",
+				mcp.Description("Field name for data_definition targets (camelCase, e.g., startDate)"),
+			),
+			mcp.WithString("fixed_value",
+				mcp.Description("Fixed value lower limit for domain targets"),
+			),
+			mcp.WithString("message_number",
+				mcp.Description("Message number for message_class targets (e.g., 005)"),
+			),
+			mcp.WithString("text_symbol_id",
+				mcp.Description("Text symbol ID for text_pool targets"),
+			),
+			mcp.WithString("text_pool_owner_type",
+				mcp.Description("Owner type for text_pool: class or function_group"),
+			),
+		), s.handleSetTranslationXCO)
+	}
+
+	if shouldRegister("ListLanguages") {
+		s.mcpServer.AddTool(mcp.NewTool("ListLanguages",
+			mcp.WithDescription("List all SAP languages installed in the system with SAP code, ISO code, and name. "+
+				"Requires ZADT_VSP with i18n service deployed."),
+		), s.handleListLanguages)
+	}
+
+	if shouldRegister("CompareTranslationsXCO") {
+		s.mcpServer.AddTool(mcp.NewTool("CompareTranslationsXCO",
+			mcp.WithDescription("Compare translations between two languages for an ABAP object using XCO_CP_I18N. "+
+				"For data_definition: provide a comma-separated list of field names. "+
+				"For data_element: all text attributes are compared (short/medium/long label, heading). "+
+				"Requires ZADT_VSP with i18n service deployed."),
+			mcp.WithString("target_type",
+				mcp.Required(),
+				mcp.Description("Target type: data_element, data_definition"),
+			),
+			mcp.WithString("object_name",
+				mcp.Required(),
+				mcp.Description("Object name in uppercase (e.g., ZVACATION_REQUEST)"),
+			),
+			mcp.WithString("source_language",
+				mcp.Required(),
+				mcp.Description("Source language SAP code (E=English, D=German, etc.)"),
+			),
+			mcp.WithString("target_language",
+				mcp.Required(),
+				mcp.Description("Target language SAP code to compare against"),
+			),
+			mcp.WithString("fields",
+				mcp.Description("Comma-separated field names for data_definition targets (e.g., startDate,endDate,status)"),
+			),
+		), s.handleCompareTranslationsXCO)
+	}
 }

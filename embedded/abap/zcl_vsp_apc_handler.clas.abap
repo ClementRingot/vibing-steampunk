@@ -57,6 +57,7 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
     APPEND NEW zcl_vsp_git_service( ) TO gt_services.
     APPEND NEW zcl_vsp_report_service( ) TO gt_services.
+    APPEND NEW zcl_vsp_i18n_service( ) TO gt_services.
   ENDMETHOD.
 
   METHOD if_apc_wsp_extension~on_start.
@@ -74,7 +75,7 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
       ( zcl_vsp_utils=>json_str( iv_key = 'session' iv_value = mv_session_id ) )
       ( zcl_vsp_utils=>json_str( iv_key = 'version' iv_value = '2.3.0' ) )
-      ( |"domains":["rfc","debug","amdp","git","report"]| )
+      ( |"domains":["rfc","debug","amdp","git","report","i18n"]| )
     ) ) ).
 
     send_response( VALUE #(
