@@ -288,6 +288,25 @@ File operations:
   SAP(action="system", params={"type": "save_to_file", "object_type": "CLAS", "object_name": "ZCL_TEST", "output_dir": "/tmp"})
   SAP(action="system", params={"type": "rename", "objType": "CLAS/OC", "oldName": "ZCL_OLD", "newName": "ZCL_NEW", "packageName": "$TMP"})`)
 
+	case "i18n":
+		return mcp.NewToolResultText(`SAP(action="i18n") - Translation / i18n operations (via XCO on ZADT_VSP WebSocket)
+
+Read translations:
+  SAP(action="i18n", target="GET_TRANSLATION", params={"target_type": "data_element", "object_name": "ZACCOUNT", "language": "DE"})
+  SAP(action="i18n", target="GET_TRANSLATION", params={"target_type": "domain", "object_name": "ZSTATUS", "language": "FR"})
+  SAP(action="i18n", target="GET_TRANSLATION", params={"target_type": "ddls", "object_name": "ZI_PRODUCT", "language": "DE", "field_name": "ProductName"})
+
+Write translations (requires transport):
+  SAP(action="i18n", target="SET_TRANSLATION", params={"target_type": "data_element", "object_name": "ZACCOUNT", "language": "DE", "transport": "A4HK900001", "texts": "[{\"attribute\":\"short_field_label\",\"value\":\"Konto\"}]"})
+
+List installed languages:
+  SAP(action="i18n", target="LIST_LANGUAGES")
+
+Compare translations between two languages:
+  SAP(action="i18n", target="COMPARE_TRANSLATIONS", params={"target_type": "data_element", "object_name": "ZACCOUNT", "source_language": "EN", "target_language": "DE"})
+
+Supported target_types: data_element, domain, table, structure, ddls, ddlx, message_class, program, function_group, class`)
+
 	case "tips", "best_practices", "workflows", "best":
 		return mcp.NewToolResultText(`SAP Best Practices & Workflows
 
@@ -328,6 +347,11 @@ File operations:
 2. Run report:                   SAP(action="debug", target="RUN_REPORT", params={"report": "ZREPORT"})
 3. Call RFC:                     SAP(action="debug", target="CALL_RFC", params={"function": "Z_MY_FM", "params": "{...}"})
 
+=== i18n / TRANSLATIONS ===
+1. List languages:               SAP(action="i18n", target="LIST_LANGUAGES")
+2. Read translation:             SAP(action="i18n", target="GET_TRANSLATION", params={"target_type": "data_element", "object_name": "ZACCOUNT", "language": "DE"})
+3. Compare translations:         SAP(action="i18n", target="COMPARE_TRANSLATIONS", params={"target_type": "data_element", "object_name": "ZACCOUNT", "source_language": "EN", "target_language": "DE"})
+
 === TIPS ===
 • Use "read" before "edit" — it gives context (deps, structure)
 • Use deploy_from_file for classes with many methods — edit locally, deploy per-file
@@ -350,6 +374,7 @@ Actions:
   test     - Run unit tests, ATC checks
   analyze  - Syntax check, call graph, code intelligence, profiler, dumps, boundary analysis
   debug    - Breakpoints, stepping, variables, RFC calls, report execution
+  i18n     - Translations: read/write/compare via XCO (data elements, domains, DDLS, etc.)
   system   - System info, transports, git, install tools, file operations
   help     - This help. Use SAP(action="help", target="<action>") for details.
 
@@ -391,8 +416,11 @@ func getUnhandledErrorMessage(action, objectType, objectName string) string {
 	case "debug":
 		sb.WriteString("Supported debug targets: SET_BREAKPOINT, GET_BREAKPOINTS, DELETE_BREAKPOINT, LISTEN, ATTACH, DETACH, STEP, GET_STACK, GET_VARIABLES, CALL_RFC, MOVE, RUN_REPORT, GET_VARIANTS, GET_TEXT_ELEMENTS, SET_TEXT_ELEMENTS, AMDP_*\n")
 		sb.WriteString("Use SAP(action=\"help\", target=\"debug\") for examples.")
+	case "i18n":
+		sb.WriteString("Supported i18n targets: GET_TRANSLATION, SET_TRANSLATION, LIST_LANGUAGES, COMPARE_TRANSLATIONS\n")
+		sb.WriteString("Use SAP(action=\"help\", target=\"i18n\") for examples.")
 	default:
-		sb.WriteString("Valid actions: read, edit, create, delete, search, query, grep, test, analyze, debug, system, help\n")
+		sb.WriteString("Valid actions: read, edit, create, delete, search, query, grep, test, analyze, debug, i18n, system, help\n")
 		sb.WriteString("Use SAP(action=\"help\") for full documentation.")
 	}
 
