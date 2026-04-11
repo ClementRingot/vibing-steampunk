@@ -61,9 +61,9 @@ type WSDebugVariable struct {
 }
 
 // NewDebugWebSocketClient creates a new WebSocket-based debug client.
-func NewDebugWebSocketClient(baseURL, client, user, password string, insecure bool) *DebugWebSocketClient {
+func NewDebugWebSocketClient(baseURL, client, user, password string, insecure bool, cookies map[string]string) *DebugWebSocketClient {
 	c := &DebugWebSocketClient{
-		BaseWebSocketClient: NewBaseWebSocketClient(baseURL, client, user, password, insecure),
+		BaseWebSocketClient: NewBaseWebSocketClient(baseURL, client, user, password, insecure, cookies),
 		Events:              make(chan *DebugEvent, 10),
 	}
 

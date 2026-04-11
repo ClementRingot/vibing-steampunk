@@ -48,6 +48,7 @@ func (s *Server) ensureDebugWSClient(ctx context.Context) error {
 		s.config.Username,
 		s.config.Password,
 		s.config.InsecureSkipVerify,
+		s.config.Cookies,
 	)
 
 	return s.debugWSClient.Connect(ctx)
