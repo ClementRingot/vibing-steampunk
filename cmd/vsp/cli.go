@@ -177,13 +177,27 @@ func getClient(params *systemParams) (*adt.Client, error) {
 
 // getWSClient creates an AMDP WebSocket client for GitExport.
 func getWSClient(ctx context.Context, params *systemParams) (*adt.AMDPWebSocketClient, error) {
-	// NewAMDPWebSocketClient(baseURL, client, user, password, insecure)
+	// Resolve cookies from file/string if available
+	var cookies map[string]string
+	if params.CookieFile != "" {
+		var err error
+		cookies, err = adt.LoadCookiesFromFile(params.CookieFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load cookies: %w", err)
+		}
+	} else if params.CookieString != "" {
+		cookies = adt.ParseCookieString(params.CookieString)
+	} else if len(cfg.Cookies) > 0 {
+		cookies = cfg.Cookies
+	}
+
 	wsClient := adt.NewAMDPWebSocketClient(
 		params.URL,
 		params.Client,
 		params.User,
 		params.Password,
 		params.Insecure,
+		cookies,
 	)
 
 	if err := wsClient.Connect(ctx); err != nil {
