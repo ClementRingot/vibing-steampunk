@@ -1,8 +1,4 @@
 "! <p class="shorttext synchronized">VSP I18N Service - XCO Translation API</p>
-"! Provides translation read/write for ABAP objects via XCO_CP_I18N.
-"! Supports: data_element, domain, data_definition (DDLS), metadata_extension (DDLX),
-"! message_class, text_pool.
-"! Requires: SAP_BASIS >= 7.57 — XCO_CP_I18N released C1 on-premise and BTP.
 CLASS zcl_vsp_i18n_service DEFINITION
   PUBLIC
   FINAL
@@ -12,18 +8,6 @@ CLASS zcl_vsp_i18n_service DEFINITION
     INTERFACES zif_vsp_service.
 
   PRIVATE SECTION.
-    "! Generic text contribution structure compatible with XCO set_translation.
-    "! NOTE: if the compiler rejects the table type in set_translation calls,
-    "!       replace ty_text_contribution / tt_text_contributions with the exact
-    "!       XCO-released type found via F2 on the method signature in ADT.
-    TYPES:
-      BEGIN OF ty_text_contribution,
-        io_attribute TYPE REF TO if_xco_i18n_text_attribute,
-        iv_text      TYPE string,
-      END OF ty_text_contribution,
-      tt_text_contributions TYPE STANDARD TABLE OF ty_text_contribution
-                            WITH DEFAULT KEY.
-
     METHODS handle_get_translation
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
@@ -40,27 +24,27 @@ CLASS zcl_vsp_i18n_service DEFINITION
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
-    "! Parse a JSON string array (content between [ ]) into a string table.
     METHODS parse_string_array
       IMPORTING iv_content        TYPE string
       RETURNING VALUE(rt_values)  TYPE string_table.
 
-    "! Append {"attribute":"...","value":"..."} to an existing JSON array fragment.
     METHODS append_text_entry
       IMPORTING iv_json           TYPE string
                 iv_attribute      TYPE string
                 iv_value          TYPE string
       RETURNING VALUE(rv_json)    TYPE string.
 
-    "! Map a text attribute name to the XCO data_element text attribute object.
     METHODS get_de_text_attr
       IMPORTING iv_name              TYPE string
-      RETURNING VALUE(ro_attr)       TYPE REF TO if_xco_i18n_text_attribute.
+      RETURNING VALUE(ro_attr)       TYPE REF TO cl_xco_dtel_text_attribute.
 
-    "! Map a text attribute name to the XCO data_definition->field text attribute.
     METHODS get_ddls_field_attr
       IMPORTING iv_name              TYPE string
-      RETURNING VALUE(ro_attr)       TYPE REF TO if_xco_i18n_text_attribute.
+      RETURNING VALUE(ro_attr)       TYPE REF TO cl_xco_ddef_fld_text_attribute.
+
+    METHODS get_me_field_attr
+      IMPORTING iv_name              TYPE string
+      RETURNING VALUE(ro_attr)       TYPE REF TO cl_xco_me_fld_text_attribute.
 
 ENDCLASS.
 
@@ -91,7 +75,6 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD zif_vsp_service~on_disconnect.
-    " No session state for i18n domain
   ENDMETHOD.
 
   METHOD handle_get_translation.
@@ -118,72 +101,109 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     TRANSLATE lv_object_name TO UPPER CASE.
     TRANSLATE lv_language TO UPPER CASE.
 
-    " Parse optional text_attributes JSON array, e.g. ["short_field_label","heading"]
     FIND PCRE '"text_attributes"\s*:\s*\[([^\]]*)\]' IN is_message-params SUBMATCHES DATA(lv_attrs_str).
     IF sy-subrc = 0 AND lv_attrs_str IS NOT INITIAL.
       lt_attributes = parse_string_array( lv_attrs_str ).
     ENDIF.
 
     TRY.
-        DATA(lo_language) = xco_cp=>language( CONV sxco_langu( lv_language ) ).
+        DATA(lo_language) = xco_cp=>language( CONV spras( lv_language ) ).
 
         CASE lv_target_type.
 
           WHEN 'data_element'.
-            DATA(lo_de_target) = xco_cp_i18n=>target->data_element->object( CONV sxco_ar_object_name( lv_object_name ) ).
-            DATA(lo_de_trans)  = lo_de_target->get_translation( io_language = lo_language ).
-            DATA lt_de_attrs   TYPE string_table.
+            DATA(lo_de_target) = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            DATA lt_de_attrs TYPE string_table.
             IF lt_attributes IS INITIAL.
-              APPEND 'short_field_label'  TO lt_de_attrs.
-              APPEND 'medium_field_label' TO lt_de_attrs.
-              APPEND 'long_field_label'   TO lt_de_attrs.
-              APPEND 'heading'            TO lt_de_attrs.
+              APPEND 'short_field_label'    TO lt_de_attrs.
+              APPEND 'medium_field_label'   TO lt_de_attrs.
+              APPEND 'long_field_label'     TO lt_de_attrs.
+              APPEND 'heading_field_label'  TO lt_de_attrs.
             ELSE.
               lt_de_attrs = lt_attributes.
             ENDIF.
-            LOOP AT lt_de_attrs INTO DATA(lv_de_attr).
-              DATA(lo_de_attr) = get_de_text_attr( lv_de_attr ).
-              CHECK lo_de_attr IS BOUND.
-              DATA(lv_de_val)  = lo_de_trans->get_text( io_attribute = lo_de_attr ).
-              lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = lv_de_attr iv_value = lv_de_val ).
+            DATA lo_de_ta TYPE REF TO cl_xco_dtel_text_attribute.
+            DATA lt_de_ta_single TYPE sxco_t_dtel_text_attributes.
+            DATA lo_de_trans TYPE REF TO if_xco_i18n_translation.
+            DATA lv_de_val TYPE string.
+            LOOP AT lt_de_attrs INTO DATA(lv_de_attr_name).
+              lo_de_ta = get_de_text_attr( lv_de_attr_name ).
+              CHECK lo_de_ta IS BOUND.
+              CLEAR lt_de_ta_single.
+              APPEND lo_de_ta TO lt_de_ta_single.
+              lo_de_trans = lo_de_target->get_translation(
+                io_language        = lo_language
+                it_text_attributes = lt_de_ta_single
+              ).
+              CLEAR lv_de_val.
+              IF lo_de_trans->texts IS NOT INITIAL.
+                lv_de_val = lo_de_trans->texts[ 1 ]->get_string_value( ).
+              ENDIF.
+              lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = lv_de_attr_name iv_value = lv_de_val ).
             ENDLOOP.
 
           WHEN 'domain'.
-            DATA(lo_dom_target) = xco_cp_i18n=>target->domain->fixed_value(
-              iv_domain_name = CONV sxco_ar_object_name( lv_object_name )
-              iv_lower_limit = CONV #( lv_fixed_value )
+            DATA(lo_dom_target) = xco_i18n=>target->domain->fixed_value(
+              iv_domain_name = CONV sxco_ad_object_name( lv_object_name )
+              iv_lower_limit = CONV if_xco_domain_fixed_value=>tv_lower_limit( lv_fixed_value )
             ).
-            DATA(lo_dom_trans) = lo_dom_target->get_translation( io_language = lo_language ).
-            DATA(lv_dom_val)   = lo_dom_trans->get_text( io_attribute = xco_cp_domain=>text_attribute->fixed_value_description ).
+            DATA lt_dom_ta TYPE sxco_t_domain_text_attributes.
+            APPEND xco_cp_domain=>text_attribute->fixed_value_description TO lt_dom_ta.
+            DATA(lo_dom_trans) = lo_dom_target->get_translation(
+              io_language        = lo_language
+              it_text_attributes = lt_dom_ta
+            ).
+            DATA lv_dom_val TYPE string.
+            IF lo_dom_trans->texts IS NOT INITIAL.
+              lv_dom_val = lo_dom_trans->texts[ 1 ]->get_string_value( ).
+            ENDIF.
             lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = 'fixed_value_description' iv_value = lv_dom_val ).
 
           WHEN 'data_definition'.
             IF lv_field_name IS INITIAL.
-              " Entity-level (whole CDS view label)
-              DATA(lo_ddls_entity) = xco_cp_i18n=>target->data_definition->entity( CONV sxco_ar_object_name( lv_object_name ) ).
-              DATA(lo_ddls_e_trans) = lo_ddls_entity->get_translation( io_language = lo_language ).
-              DATA(lv_entity_val) = lo_ddls_e_trans->get_text( io_attribute = xco_cp_data_definition=>text_attribute->field->endusertext_label ).
-              lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = 'endusertext_label' iv_value = lv_entity_val ).
+              DATA(lo_ddls_entity) = xco_i18n=>target->data_definition->entity( CONV sxco_cds_object_name( lv_object_name ) ).
+              DATA lt_ent_ta TYPE sxco_t_ddef_ent_text_attributs.
+              APPEND xco_cp_data_definition=>text_attribute->entity->endusertext_label TO lt_ent_ta.
+              DATA(lo_ent_trans) = lo_ddls_entity->get_translation(
+                io_language        = lo_language
+                it_text_attributes = lt_ent_ta
+              ).
+              DATA lv_ent_val TYPE string.
+              IF lo_ent_trans->texts IS NOT INITIAL.
+                lv_ent_val = lo_ent_trans->texts[ 1 ]->get_string_value( ).
+              ENDIF.
+              lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = 'endusertext_label' iv_value = lv_ent_val ).
             ELSE.
               TRANSLATE lv_field_name TO LOWER CASE.
-              DATA(lo_ddls_field) = xco_cp_i18n=>target->data_definition->field(
-                iv_entity_name = CONV sxco_ar_object_name( lv_object_name )
-                iv_field_name  = CONV #( lv_field_name )
+              DATA(lo_ddls_field) = xco_i18n=>target->data_definition->field(
+                iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
+                iv_field_name  = CONV sxco_cds_field_name( lv_field_name )
               ).
-              DATA(lo_ddls_f_trans) = lo_ddls_field->get_translation( io_language = lo_language ).
-              DATA lt_ddls_attrs TYPE string_table.
+              DATA lt_fld_attrs TYPE string_table.
               IF lt_attributes IS INITIAL.
-                APPEND 'endusertext_label'     TO lt_ddls_attrs.
-                APPEND 'endusertext_heading'   TO lt_ddls_attrs.
-                APPEND 'endusertext_quickinfo' TO lt_ddls_attrs.
+                APPEND 'endusertext_label'     TO lt_fld_attrs.
+                APPEND 'endusertext_quickinfo' TO lt_fld_attrs.
               ELSE.
-                lt_ddls_attrs = lt_attributes.
+                lt_fld_attrs = lt_attributes.
               ENDIF.
-              LOOP AT lt_ddls_attrs INTO DATA(lv_ddls_attr).
-                DATA(lo_ddls_attr) = get_ddls_field_attr( lv_ddls_attr ).
-                CHECK lo_ddls_attr IS BOUND.
-                DATA(lv_ddls_val) = lo_ddls_f_trans->get_text( io_attribute = lo_ddls_attr ).
-                lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = lv_ddls_attr iv_value = lv_ddls_val ).
+              DATA lo_fld_ta TYPE REF TO cl_xco_ddef_fld_text_attribute.
+              DATA lt_fld_ta_single TYPE sxco_t_ddef_fld_text_attributs.
+              DATA lo_fld_trans TYPE REF TO if_xco_i18n_translation.
+              DATA lv_fld_val TYPE string.
+              LOOP AT lt_fld_attrs INTO DATA(lv_fld_attr_name).
+                lo_fld_ta = get_ddls_field_attr( lv_fld_attr_name ).
+                CHECK lo_fld_ta IS BOUND.
+                CLEAR lt_fld_ta_single.
+                APPEND lo_fld_ta TO lt_fld_ta_single.
+                lo_fld_trans = lo_ddls_field->get_translation(
+                  io_language        = lo_language
+                  it_text_attributes = lt_fld_ta_single
+                ).
+                CLEAR lv_fld_val.
+                IF lo_fld_trans->texts IS NOT INITIAL.
+                  lv_fld_val = lo_fld_trans->texts[ 1 ]->get_string_value( ).
+                ENDIF.
+                lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = lv_fld_attr_name iv_value = lv_fld_val ).
               ENDLOOP.
             ENDIF.
 
@@ -194,14 +214,41 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 iv_message = 'field_name is required for metadata_extension target' ).
               RETURN.
             ENDIF.
-            TRANSLATE lv_field_name TO LOWER CASE.
-            DATA(lo_ddlx_target) = xco_cp_i18n=>target->metadata_extension->field(
-              iv_metadata_extension_name = CONV sxco_ar_object_name( lv_object_name )
-              iv_field_name              = CONV #( lv_field_name )
+            DATA(lo_ddlx_target) = xco_i18n=>target->metadata_extension->field(
+              iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
+              iv_field_name              = CONV sxco_cds_field_name( lv_field_name )
             ).
-            DATA(lo_ddlx_trans) = lo_ddlx_target->get_translation( io_language = lo_language ).
-            DATA(lv_ddlx_val) = lo_ddlx_trans->get_text( io_attribute = xco_cp_metadata_extension=>text_attribute->field->ui_lineitem_label( 1 ) ).
-            lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = 'ui_lineitem_label' iv_value = lv_ddlx_val ).
+            DATA lt_me_attr_names TYPE string_table.
+            IF lt_attributes IS INITIAL.
+              APPEND 'endusertext_label'       TO lt_me_attr_names.
+              APPEND 'ui_lineitem_label'       TO lt_me_attr_names.
+              APPEND 'ui_identification_label' TO lt_me_attr_names.
+              APPEND 'ui_fieldgroup_label'     TO lt_me_attr_names.
+            ELSE.
+              lt_me_attr_names = lt_attributes.
+            ENDIF.
+            DATA lo_me_ta TYPE REF TO cl_xco_me_fld_text_attribute.
+            DATA lt_me_ta_single TYPE sxco_t_me_fld_text_attributes.
+            DATA lo_me_trans TYPE REF TO if_xco_i18n_translation.
+            DATA lv_me_val TYPE string.
+            LOOP AT lt_me_attr_names INTO DATA(lv_me_attr_name).
+              lo_me_ta = get_me_field_attr( lv_me_attr_name ).
+              CHECK lo_me_ta IS BOUND.
+              CLEAR lt_me_ta_single.
+              APPEND lo_me_ta TO lt_me_ta_single.
+              CLEAR lv_me_val.
+              TRY.
+                  lo_me_trans = lo_ddlx_target->get_translation(
+                    io_language        = lo_language
+                    it_text_attributes = lt_me_ta_single
+                  ).
+                  IF lo_me_trans->texts IS NOT INITIAL.
+                    lv_me_val = lo_me_trans->texts[ 1 ]->get_string_value( ).
+                  ENDIF.
+                CATCH cx_root.
+              ENDTRY.
+              lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = lv_me_attr_name iv_value = lv_me_val ).
+            ENDLOOP.
 
           WHEN 'message_class'.
             IF lv_msg_number IS INITIAL.
@@ -210,30 +257,50 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 iv_message = 'message_number is required for message_class target' ).
               RETURN.
             ENDIF.
-            DATA(lo_mc_target) = xco_cp_i18n=>target->message_class->message(
-              iv_message_class_name = CONV sxco_ar_object_name( lv_object_name )
-              iv_message_number     = CONV #( lv_msg_number )
+            DATA(lo_mc_target) = xco_i18n=>target->message_class->message(
+              iv_message_class_name = CONV sxco_mc_object_name( lv_object_name )
+              iv_message_number     = CONV if_xco_mc_message=>tv_number( lv_msg_number )
             ).
-            DATA(lo_mc_trans) = lo_mc_target->get_translation( io_language = lo_language ).
-            DATA(lv_mc_val) = lo_mc_trans->get_text( io_attribute = xco_cp_message_class=>text_attribute->message_short_text ).
+            DATA lt_mc_ta TYPE sxco_t_mc_text_attributes.
+            APPEND xco_cp_message_class=>text_attribute->message_short_text TO lt_mc_ta.
+            DATA(lo_mc_trans) = lo_mc_target->get_translation(
+              io_language        = lo_language
+              it_text_attributes = lt_mc_ta
+            ).
+            DATA lv_mc_val TYPE string.
+            IF lo_mc_trans->texts IS NOT INITIAL.
+              lv_mc_val = lo_mc_trans->texts[ 1 ]->get_string_value( ).
+            ENDIF.
             lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = 'message_short_text' iv_value = lv_mc_val ).
 
           WHEN 'text_pool'.
+            DATA lt_tp_ta TYPE sxco_t_tp_text_attributes.
+            APPEND xco_cp_text_pool=>text_attribute->text_element_text TO lt_tp_ta.
             DATA lv_tp_text TYPE string.
             IF lv_pool_type = 'class' OR lv_pool_type IS INITIAL.
-              DATA(lo_cls_tp) = xco_cp_i18n=>target->text_pool->class_text_symbol(
-                iv_class_name     = CONV sxco_ar_object_name( lv_object_name )
-                iv_text_symbol_id = CONV #( lv_text_sym_id )
+              DATA(lo_cls_tp) = xco_i18n=>target->text_pool->class_text_symbol(
+                iv_class_name     = CONV sxco_ao_object_name( lv_object_name )
+                iv_text_symbol_id = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
-              DATA(lo_cls_trans) = lo_cls_tp->get_translation( io_language = lo_language ).
-              lv_tp_text = lo_cls_trans->get_text( io_attribute = xco_cp_text_pool=>text_attribute->text_element_text ).
+              DATA(lo_cls_trans) = lo_cls_tp->get_translation(
+                io_language        = lo_language
+                it_text_attributes = lt_tp_ta
+              ).
+              IF lo_cls_trans->texts IS NOT INITIAL.
+                lv_tp_text = lo_cls_trans->texts[ 1 ]->get_string_value( ).
+              ENDIF.
             ELSE.
-              DATA(lo_fg_tp) = xco_cp_i18n=>target->text_pool->function_group_text_symbol(
-                iv_function_group_name = CONV sxco_ar_object_name( lv_object_name )
-                iv_text_symbol_id      = CONV #( lv_text_sym_id )
+              DATA(lo_fg_tp) = xco_i18n=>target->text_pool->function_group_text_symbol(
+                iv_function_group_name = CONV sxco_fg_object_name( lv_object_name )
+                iv_text_symbol_id      = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
-              DATA(lo_fg_trans) = lo_fg_tp->get_translation( io_language = lo_language ).
-              lv_tp_text = lo_fg_trans->get_text( io_attribute = xco_cp_text_pool=>text_attribute->text_element_text ).
+              DATA(lo_fg_trans) = lo_fg_tp->get_translation(
+                io_language        = lo_language
+                it_text_attributes = lt_tp_ta
+              ).
+              IF lo_fg_trans->texts IS NOT INITIAL.
+                lv_tp_text = lo_fg_trans->texts[ 1 ]->get_string_value( ).
+              ENDIF.
             ENDIF.
             lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = 'text_element_text' iv_value = lv_tp_text ).
 
@@ -282,7 +349,6 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     TRANSLATE lv_language TO UPPER CASE.
     TRANSLATE lv_transport TO UPPER CASE.
 
-    " Extract texts array: [{"attribute":"...","value":"..."},...]
     FIND PCRE '"texts"\s*:\s*(\[[^\]]*\])' IN is_message-params SUBMATCHES DATA(lv_texts_str).
     IF sy-subrc <> 0 OR lv_texts_str IS INITIAL.
       rs_response = zcl_vsp_utils=>build_error(
@@ -291,7 +357,6 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Parse {"attribute":"...","value":"..."} entries from the array
     DATA lt_attrs TYPE string_table.
     DATA lt_vals  TYPE string_table.
     FIND ALL OCCURRENCES OF PCRE '\{[^}]+\}' IN lv_texts_str RESULTS DATA(lt_obj_matches).
@@ -308,61 +373,58 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Build typed texts table from parsed pairs
-    DATA lt_texts TYPE tt_text_contributions.
-    DATA lv_attr  TYPE string.
-    DATA lv_val   TYPE string.
-    DATA lo_attr  TYPE REF TO if_xco_i18n_text_attribute.
+    DATA lv_attr TYPE string.
+    DATA lv_val  TYPE string.
 
     TRY.
-        DATA(lo_language)        = xco_cp=>language( CONV sxco_langu( lv_language ) ).
+        DATA(lo_language)        = xco_cp=>language( CONV spras( lv_language ) ).
         DATA(lo_change_scenario) = xco_cp_cts=>transport->for( CONV #( lv_transport ) ).
 
-        " Build texts table — attribute mapping depends on target_type
-        DO lines( lt_attrs ) TIMES.
-          DATA(lv_idx) = sy-index.
-          READ TABLE lt_attrs INDEX lv_idx INTO lv_attr.
-          READ TABLE lt_vals  INDEX lv_idx INTO lv_val.
-          CLEAR lo_attr.
-
-          CASE lv_target_type.
-            WHEN 'data_element'.
-              lo_attr = get_de_text_attr( lv_attr ).
-            WHEN 'data_definition'.
-              lo_attr = get_ddls_field_attr( lv_attr ).
-            WHEN 'domain'.
-              lo_attr = xco_cp_domain=>text_attribute->fixed_value_description.
-            WHEN 'message_class'.
-              lo_attr = xco_cp_message_class=>text_attribute->message_short_text.
-            WHEN 'text_pool'.
-              lo_attr = xco_cp_text_pool=>text_attribute->text_element_text.
-          ENDCASE.
-
-          IF lo_attr IS BOUND.
-            APPEND VALUE #( io_attribute = lo_attr iv_text = lv_val ) TO lt_texts.
-          ENDIF.
-        ENDDO.
-
-        IF lt_texts IS INITIAL.
-          rs_response = zcl_vsp_utils=>build_error(
-            iv_id = is_message-id iv_code = 'INVALID_ATTRS'
-            iv_message = |No valid text attributes found for target_type '{ lv_target_type }'| ).
-          RETURN.
-        ENDIF.
-
-        " Route to the correct XCO target and call set_translation
         CASE lv_target_type.
 
           WHEN 'data_element'.
-            DATA(lo_de_set) = xco_cp_i18n=>target->data_element->object( CONV sxco_ar_object_name( lv_object_name ) ).
-            lo_de_set->set_translation( it_texts = lt_texts io_language = lo_language io_change_scenario = lo_change_scenario ).
+            DATA(lo_de_set) = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            DATA lt_dtel_texts TYPE sxco_t_dtel_texts.
+            DATA lo_de_ta_w TYPE REF TO cl_xco_dtel_text_attribute.
+            DO lines( lt_attrs ) TIMES.
+              DATA(lv_idx_de) = sy-index.
+              READ TABLE lt_attrs INDEX lv_idx_de INTO lv_attr.
+              READ TABLE lt_vals  INDEX lv_idx_de INTO lv_val.
+              lo_de_ta_w = get_de_text_attr( lv_attr ).
+              IF lo_de_ta_w IS BOUND.
+                DATA(lo_de_tv) = CAST if_xco_i18n_text_attribute( lo_de_ta_w )->get_text_for_string( lv_val ).
+                APPEND lo_de_ta_w->create_text( io_value = lo_de_tv ) TO lt_dtel_texts.
+              ENDIF.
+            ENDDO.
+            IF lt_dtel_texts IS INITIAL.
+              rs_response = zcl_vsp_utils=>build_error(
+                iv_id = is_message-id iv_code = 'INVALID_ATTRS'
+                iv_message = |No valid text attributes found for target_type '{ lv_target_type }'| ).
+              RETURN.
+            ENDIF.
+            lo_de_set->set_translation(
+              it_texts           = lt_dtel_texts
+              io_language        = lo_language
+              io_change_scenario = lo_change_scenario
+            ).
 
           WHEN 'domain'.
-            DATA(lo_dom_set) = xco_cp_i18n=>target->domain->fixed_value(
-              iv_domain_name = CONV sxco_ar_object_name( lv_object_name )
-              iv_lower_limit = CONV #( lv_fixed_value )
+            DATA(lo_dom_set) = xco_i18n=>target->domain->fixed_value(
+              iv_domain_name = CONV sxco_ad_object_name( lv_object_name )
+              iv_lower_limit = CONV if_xco_domain_fixed_value=>tv_lower_limit( lv_fixed_value )
             ).
-            lo_dom_set->set_translation( it_texts = lt_texts io_language = lo_language io_change_scenario = lo_change_scenario ).
+            DATA lt_dom_texts TYPE sxco_t_domain_texts.
+            DATA(lo_dom_ta_w) = xco_cp_domain=>text_attribute->fixed_value_description.
+            DO lines( lt_attrs ) TIMES.
+              READ TABLE lt_vals INDEX sy-index INTO lv_val.
+              DATA(lo_dom_tv) = CAST if_xco_i18n_text_attribute( lo_dom_ta_w )->get_text_for_string( lv_val ).
+              APPEND lo_dom_ta_w->create_text( io_value = lo_dom_tv ) TO lt_dom_texts.
+            ENDDO.
+            lo_dom_set->set_translation(
+              it_texts           = lt_dom_texts
+              io_language        = lo_language
+              io_change_scenario = lo_change_scenario
+            ).
 
           WHEN 'data_definition'.
             IF lv_field_name IS INITIAL.
@@ -372,33 +434,116 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               RETURN.
             ENDIF.
             TRANSLATE lv_field_name TO LOWER CASE.
-            DATA(lo_ddls_set) = xco_cp_i18n=>target->data_definition->field(
-              iv_entity_name = CONV sxco_ar_object_name( lv_object_name )
-              iv_field_name  = CONV #( lv_field_name )
+            DATA(lo_ddls_set) = xco_i18n=>target->data_definition->field(
+              iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
+              iv_field_name  = CONV sxco_cds_field_name( lv_field_name )
             ).
-            lo_ddls_set->set_translation( it_texts = lt_texts io_language = lo_language io_change_scenario = lo_change_scenario ).
+            DATA lt_ddls_texts TYPE sxco_t_ddef_fld_texts.
+            DATA lo_fld_ta_w TYPE REF TO cl_xco_ddef_fld_text_attribute.
+            DO lines( lt_attrs ) TIMES.
+              DATA(lv_idx_fld) = sy-index.
+              READ TABLE lt_attrs INDEX lv_idx_fld INTO lv_attr.
+              READ TABLE lt_vals  INDEX lv_idx_fld INTO lv_val.
+              lo_fld_ta_w = get_ddls_field_attr( lv_attr ).
+              IF lo_fld_ta_w IS BOUND.
+                DATA(lo_fld_tv) = CAST if_xco_i18n_text_attribute( lo_fld_ta_w )->get_text_for_string( lv_val ).
+                APPEND lo_fld_ta_w->create_text( io_value = lo_fld_tv ) TO lt_ddls_texts.
+              ENDIF.
+            ENDDO.
+            IF lt_ddls_texts IS INITIAL.
+              rs_response = zcl_vsp_utils=>build_error(
+                iv_id = is_message-id iv_code = 'INVALID_ATTRS'
+                iv_message = |No valid text attributes found for target_type '{ lv_target_type }'| ).
+              RETURN.
+            ENDIF.
+            lo_ddls_set->set_translation(
+              io_language        = lo_language
+              it_texts           = lt_ddls_texts
+              io_change_scenario = lo_change_scenario
+            ).
 
           WHEN 'message_class'.
-            DATA(lo_mc_set) = xco_cp_i18n=>target->message_class->message(
-              iv_message_class_name = CONV sxco_ar_object_name( lv_object_name )
-              iv_message_number     = CONV #( lv_msg_number )
+            DATA(lo_mc_set) = xco_i18n=>target->message_class->message(
+              iv_message_class_name = CONV sxco_mc_object_name( lv_object_name )
+              iv_message_number     = CONV if_xco_mc_message=>tv_number( lv_msg_number )
             ).
-            lo_mc_set->set_translation( it_texts = lt_texts io_language = lo_language io_change_scenario = lo_change_scenario ).
+            DATA lt_mc_texts TYPE sxco_t_mc_texts.
+            DATA(lo_mc_ta_w) = xco_cp_message_class=>text_attribute->message_short_text.
+            DO lines( lt_attrs ) TIMES.
+              READ TABLE lt_vals INDEX sy-index INTO lv_val.
+              DATA(lo_mc_tv) = CAST if_xco_i18n_text_attribute( lo_mc_ta_w )->get_text_for_string( lv_val ).
+              APPEND lo_mc_ta_w->create_text( io_value = lo_mc_tv ) TO lt_mc_texts.
+            ENDDO.
+            lo_mc_set->set_translation(
+              it_texts           = lt_mc_texts
+              io_language        = lo_language
+              io_change_scenario = lo_change_scenario
+            ).
 
           WHEN 'text_pool'.
+            DATA lt_tp_texts TYPE sxco_t_tp_texts.
+            DATA(lo_tp_ta_w) = xco_cp_text_pool=>text_attribute->text_element_text.
+            DO lines( lt_attrs ) TIMES.
+              READ TABLE lt_vals INDEX sy-index INTO lv_val.
+              DATA(lo_tp_tv) = CAST if_xco_i18n_text_attribute( lo_tp_ta_w )->get_text_for_string( lv_val ).
+              APPEND lo_tp_ta_w->create_text( io_value = lo_tp_tv ) TO lt_tp_texts.
+            ENDDO.
             IF lv_pool_type = 'class' OR lv_pool_type IS INITIAL.
-              DATA(lo_cls_set) = xco_cp_i18n=>target->text_pool->class_text_symbol(
-                iv_class_name     = CONV sxco_ar_object_name( lv_object_name )
-                iv_text_symbol_id = CONV #( lv_text_sym_id )
+              DATA(lo_cls_set) = xco_i18n=>target->text_pool->class_text_symbol(
+                iv_class_name     = CONV sxco_ao_object_name( lv_object_name )
+                iv_text_symbol_id = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
-              lo_cls_set->set_translation( it_texts = lt_texts io_language = lo_language io_change_scenario = lo_change_scenario ).
+              lo_cls_set->set_translation(
+                it_texts           = lt_tp_texts
+                io_language        = lo_language
+                io_change_scenario = lo_change_scenario
+              ).
             ELSE.
-              DATA(lo_fg_set) = xco_cp_i18n=>target->text_pool->function_group_text_symbol(
-                iv_function_group_name = CONV sxco_ar_object_name( lv_object_name )
-                iv_text_symbol_id      = CONV #( lv_text_sym_id )
+              DATA(lo_fg_set) = xco_i18n=>target->text_pool->function_group_text_symbol(
+                iv_function_group_name = CONV sxco_fg_object_name( lv_object_name )
+                iv_text_symbol_id      = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
-              lo_fg_set->set_translation( it_texts = lt_texts io_language = lo_language io_change_scenario = lo_change_scenario ).
+              lo_fg_set->set_translation(
+                it_texts           = lt_tp_texts
+                io_language        = lo_language
+                io_change_scenario = lo_change_scenario
+              ).
             ENDIF.
+
+          WHEN 'metadata_extension'.
+            IF lv_field_name IS INITIAL.
+              rs_response = zcl_vsp_utils=>build_error(
+                iv_id = is_message-id iv_code = 'MISSING_PARAM'
+                iv_message = 'field_name is required for metadata_extension set_translation' ).
+              RETURN.
+            ENDIF.
+            DATA(lo_me_set) = xco_i18n=>target->metadata_extension->field(
+              iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
+              iv_field_name              = CONV sxco_cds_field_name( lv_field_name )
+            ).
+            DATA lt_me_texts TYPE sxco_t_me_fld_texts.
+            DATA lo_me_ta_w TYPE REF TO cl_xco_me_fld_text_attribute.
+            DO lines( lt_attrs ) TIMES.
+              DATA(lv_idx_me) = sy-index.
+              READ TABLE lt_attrs INDEX lv_idx_me INTO lv_attr.
+              READ TABLE lt_vals  INDEX lv_idx_me INTO lv_val.
+              lo_me_ta_w = get_me_field_attr( lv_attr ).
+              IF lo_me_ta_w IS BOUND.
+                DATA(lo_me_tv) = CAST if_xco_i18n_text_attribute( lo_me_ta_w )->get_text_for_string( lv_val ).
+                APPEND lo_me_ta_w->create_text( io_value = lo_me_tv ) TO lt_me_texts.
+              ENDIF.
+            ENDDO.
+            IF lt_me_texts IS INITIAL.
+              rs_response = zcl_vsp_utils=>build_error(
+                iv_id = is_message-id iv_code = 'INVALID_ATTRS'
+                iv_message = |No valid text attributes found for target_type '{ lv_target_type }'| ).
+              RETURN.
+            ENDIF.
+            lo_me_set->set_translation(
+              it_texts           = lt_me_texts
+              io_language        = lo_language
+              io_change_scenario = lo_change_scenario
+            ).
 
           WHEN OTHERS.
             rs_response = zcl_vsp_utils=>build_error(
@@ -424,26 +569,22 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
 
   METHOD handle_list_languages.
     TRY.
-        " Query installed SAP languages with ISO codes and localized names
-        SELECT a~sprsl AS sap_code,
-               a~laiso AS iso_code,
-               b~sptxt AS name
-          FROM t002 AS a
-          LEFT JOIN t002t AS b
-            ON  b~sprsl = a~sprsl
-            AND b~spras = @sy-langu
+        SELECT Language,
+               LanguageISOCode
+          FROM I_Language
           INTO TABLE @DATA(lt_langs)
-          ORDER BY a~sprsl.
+          ORDER BY Language.
 
         DATA lv_langs_json TYPE string.
         LOOP AT lt_langs INTO DATA(ls_lang).
+          DATA(lv_name) = xco_cp=>language( ls_lang-Language )->get_name( ).
           IF lv_langs_json IS NOT INITIAL.
             lv_langs_json = lv_langs_json && |,|.
           ENDIF.
           lv_langs_json = lv_langs_json && zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-            ( zcl_vsp_utils=>json_str( iv_key = 'sap_code' iv_value = ls_lang-sap_code ) )
-            ( zcl_vsp_utils=>json_str( iv_key = 'iso_code' iv_value = ls_lang-iso_code ) )
-            ( zcl_vsp_utils=>json_str( iv_key = 'name'     iv_value = ls_lang-name     ) )
+            ( zcl_vsp_utils=>json_str( iv_key = 'sap_code' iv_value = CONV string( ls_lang-Language ) ) )
+            ( zcl_vsp_utils=>json_str( iv_key = 'iso_code' iv_value = CONV string( ls_lang-LanguageISOCode ) ) )
+            ( zcl_vsp_utils=>json_str( iv_key = 'name'     iv_value = CONV string( lv_name ) ) )
           ) ) ).
         ENDLOOP.
 
@@ -475,15 +616,14 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     TRANSLATE lv_source_lang TO UPPER CASE.
     TRANSLATE lv_target_lang TO UPPER CASE.
 
-    " Parse optional fields array
     FIND PCRE '"fields"\s*:\s*\[([^\]]*)\]' IN is_message-params SUBMATCHES DATA(lv_fields_str).
     IF sy-subrc = 0 AND lv_fields_str IS NOT INITIAL.
       lt_fields = parse_string_array( lv_fields_str ).
     ENDIF.
 
     TRY.
-        DATA(lo_src_lang) = xco_cp=>language( CONV sxco_langu( lv_source_lang ) ).
-        DATA(lo_tgt_lang) = xco_cp=>language( CONV sxco_langu( lv_target_lang ) ).
+        DATA(lo_src_lang) = xco_cp=>language( CONV spras( lv_source_lang ) ).
+        DATA(lo_tgt_lang) = xco_cp=>language( CONV spras( lv_target_lang ) ).
 
         CASE lv_target_type.
 
@@ -495,19 +635,36 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               RETURN.
             ENDIF.
 
+            DATA lt_cmp_fld_ta TYPE sxco_t_ddef_fld_text_attributs.
+            APPEND xco_cp_data_definition=>text_attribute->field->endusertext_label TO lt_cmp_fld_ta.
+
+            DATA lv_src_lbl TYPE string.
+            DATA lv_tgt_lbl TYPE string.
             LOOP AT lt_fields INTO DATA(lv_field).
               DATA(lv_fld_lower) = lv_field.
               TRANSLATE lv_fld_lower TO LOWER CASE.
 
-              DATA(lo_fld) = xco_cp_i18n=>target->data_definition->field(
-                iv_entity_name = CONV sxco_ar_object_name( lv_object_name )
-                iv_field_name  = CONV #( lv_fld_lower )
+              DATA(lo_cmp_fld) = xco_i18n=>target->data_definition->field(
+                iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
+                iv_field_name  = CONV sxco_cds_field_name( lv_fld_lower )
               ).
-              DATA(lo_fld_src_t) = lo_fld->get_translation( io_language = lo_src_lang ).
-              DATA(lo_fld_tgt_t) = lo_fld->get_translation( io_language = lo_tgt_lang ).
+              DATA(lo_cmp_src_t) = lo_cmp_fld->get_translation(
+                io_language        = lo_src_lang
+                it_text_attributes = lt_cmp_fld_ta
+              ).
+              DATA(lo_cmp_tgt_t) = lo_cmp_fld->get_translation(
+                io_language        = lo_tgt_lang
+                it_text_attributes = lt_cmp_fld_ta
+              ).
 
-              DATA(lv_src_lbl) = lo_fld_src_t->get_text( io_attribute = xco_cp_data_definition=>text_attribute->field->endusertext_label ).
-              DATA(lv_tgt_lbl) = lo_fld_tgt_t->get_text( io_attribute = xco_cp_data_definition=>text_attribute->field->endusertext_label ).
+              CLEAR: lv_src_lbl, lv_tgt_lbl.
+              IF lo_cmp_src_t->texts IS NOT INITIAL.
+                lv_src_lbl = lo_cmp_src_t->texts[ 1 ]->get_string_value( ).
+              ENDIF.
+              IF lo_cmp_tgt_t->texts IS NOT INITIAL.
+                lv_tgt_lbl = lo_cmp_tgt_t->texts[ 1 ]->get_string_value( ).
+              ENDIF.
+
               DATA(lv_has_diff) = xsdbool( lv_src_lbl <> lv_tgt_lbl OR lv_tgt_lbl IS INITIAL ).
 
               DATA(lv_src_json) = append_text_entry( iv_json = '' iv_attribute = 'endusertext_label' iv_value = lv_src_lbl ).
@@ -523,25 +680,42 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             ENDLOOP.
 
           WHEN 'data_element'.
-            DATA(lo_cmp_de) = xco_cp_i18n=>target->data_element->object( CONV sxco_ar_object_name( lv_object_name ) ).
-            DATA(lo_cmp_de_src_t) = lo_cmp_de->get_translation( io_language = lo_src_lang ).
-            DATA(lo_cmp_de_tgt_t) = lo_cmp_de->get_translation( io_language = lo_tgt_lang ).
+            DATA(lo_cmp_de) = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
 
-            DATA lt_cmp_de_attrs TYPE string_table.
-            APPEND 'short_field_label'  TO lt_cmp_de_attrs.
-            APPEND 'medium_field_label' TO lt_cmp_de_attrs.
-            APPEND 'long_field_label'   TO lt_cmp_de_attrs.
-            APPEND 'heading'            TO lt_cmp_de_attrs.
+            DATA lt_cmp_de_attr_names TYPE string_table.
+            APPEND 'short_field_label'    TO lt_cmp_de_attr_names.
+            APPEND 'medium_field_label'   TO lt_cmp_de_attr_names.
+            APPEND 'long_field_label'     TO lt_cmp_de_attr_names.
+            APPEND 'heading_field_label'  TO lt_cmp_de_attr_names.
 
             DATA lv_src_texts_json TYPE string.
             DATA lv_tgt_texts_json TYPE string.
             DATA lv_any_diff       TYPE abap_bool VALUE abap_false.
 
-            LOOP AT lt_cmp_de_attrs INTO DATA(lv_cmp_attr).
-              DATA(lo_cmp_attr) = get_de_text_attr( lv_cmp_attr ).
-              CHECK lo_cmp_attr IS BOUND.
-              DATA(lv_src_t) = lo_cmp_de_src_t->get_text( io_attribute = lo_cmp_attr ).
-              DATA(lv_tgt_t) = lo_cmp_de_tgt_t->get_text( io_attribute = lo_cmp_attr ).
+            DATA lo_cmp_de_ta TYPE REF TO cl_xco_dtel_text_attribute.
+            DATA lt_cmp_de_single_ta TYPE sxco_t_dtel_text_attributes.
+            DATA lv_src_t TYPE string.
+            DATA lv_tgt_t TYPE string.
+
+            LOOP AT lt_cmp_de_attr_names INTO DATA(lv_cmp_attr).
+              lo_cmp_de_ta = get_de_text_attr( lv_cmp_attr ).
+              CHECK lo_cmp_de_ta IS BOUND.
+              CLEAR lt_cmp_de_single_ta.
+              APPEND lo_cmp_de_ta TO lt_cmp_de_single_ta.
+
+              DATA(lo_cmp_de_src) = lo_cmp_de->get_translation(
+                io_language = lo_src_lang it_text_attributes = lt_cmp_de_single_ta ).
+              DATA(lo_cmp_de_tgt) = lo_cmp_de->get_translation(
+                io_language = lo_tgt_lang it_text_attributes = lt_cmp_de_single_ta ).
+
+              CLEAR: lv_src_t, lv_tgt_t.
+              IF lo_cmp_de_src->texts IS NOT INITIAL.
+                lv_src_t = lo_cmp_de_src->texts[ 1 ]->get_string_value( ).
+              ENDIF.
+              IF lo_cmp_de_tgt->texts IS NOT INITIAL.
+                lv_tgt_t = lo_cmp_de_tgt->texts[ 1 ]->get_string_value( ).
+              ENDIF.
+
               IF lv_src_t <> lv_tgt_t OR lv_tgt_t IS INITIAL.
                 lv_any_diff = abap_true.
               ENDIF.
@@ -556,10 +730,79 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               ( zcl_vsp_utils=>json_bool( iv_key = 'has_difference' iv_value = lv_any_diff    ) )
             ) ) ).
 
+          WHEN 'metadata_extension'.
+            IF lt_fields IS INITIAL.
+              rs_response = zcl_vsp_utils=>build_error(
+                iv_id = is_message-id iv_code = 'MISSING_PARAM'
+                iv_message = 'fields array required for metadata_extension compare_translations' ).
+              RETURN.
+            ENDIF.
+
+            DATA lt_cmp_me_attr_names TYPE string_table.
+            APPEND 'endusertext_label'       TO lt_cmp_me_attr_names.
+            APPEND 'ui_lineitem_label'       TO lt_cmp_me_attr_names.
+            APPEND 'ui_identification_label' TO lt_cmp_me_attr_names.
+            APPEND 'ui_fieldgroup_label'     TO lt_cmp_me_attr_names.
+
+            DATA lo_cmp_me_ta TYPE REF TO cl_xco_me_fld_text_attribute.
+            DATA lt_cmp_me_single TYPE sxco_t_me_fld_text_attributes.
+            DATA lv_cmp_me_src TYPE string.
+            DATA lv_cmp_me_tgt TYPE string.
+
+            LOOP AT lt_fields INTO DATA(lv_me_field).
+              DATA(lv_me_src_json) = ||.
+              DATA(lv_me_tgt_json) = ||.
+              DATA(lv_me_any_diff) = abap_false.
+
+              DATA(lo_cmp_me) = xco_i18n=>target->metadata_extension->field(
+                iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
+                iv_field_name              = CONV sxco_cds_field_name( lv_me_field )
+              ).
+
+              LOOP AT lt_cmp_me_attr_names INTO DATA(lv_cmp_me_attr).
+                lo_cmp_me_ta = get_me_field_attr( lv_cmp_me_attr ).
+                CHECK lo_cmp_me_ta IS BOUND.
+                CLEAR lt_cmp_me_single.
+                APPEND lo_cmp_me_ta TO lt_cmp_me_single.
+
+                CLEAR: lv_cmp_me_src, lv_cmp_me_tgt.
+                TRY.
+                    DATA(lo_cmp_me_src_t) = lo_cmp_me->get_translation(
+                      io_language = lo_src_lang it_text_attributes = lt_cmp_me_single ).
+                    IF lo_cmp_me_src_t->texts IS NOT INITIAL.
+                      lv_cmp_me_src = lo_cmp_me_src_t->texts[ 1 ]->get_string_value( ).
+                    ENDIF.
+                  CATCH cx_root.
+                ENDTRY.
+                TRY.
+                    DATA(lo_cmp_me_tgt_t) = lo_cmp_me->get_translation(
+                      io_language = lo_tgt_lang it_text_attributes = lt_cmp_me_single ).
+                    IF lo_cmp_me_tgt_t->texts IS NOT INITIAL.
+                      lv_cmp_me_tgt = lo_cmp_me_tgt_t->texts[ 1 ]->get_string_value( ).
+                    ENDIF.
+                  CATCH cx_root.
+                ENDTRY.
+
+                IF lv_cmp_me_src <> lv_cmp_me_tgt OR lv_cmp_me_tgt IS INITIAL.
+                  lv_me_any_diff = abap_true.
+                ENDIF.
+                lv_me_src_json = append_text_entry( iv_json = lv_me_src_json iv_attribute = lv_cmp_me_attr iv_value = lv_cmp_me_src ).
+                lv_me_tgt_json = append_text_entry( iv_json = lv_me_tgt_json iv_attribute = lv_cmp_me_attr iv_value = lv_cmp_me_tgt ).
+              ENDLOOP.
+
+              IF lv_items_json IS NOT INITIAL. lv_items_json = lv_items_json && |,|. ENDIF.
+              lv_items_json = lv_items_json && zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
+                ( zcl_vsp_utils=>json_str(  iv_key = 'field_or_key'   iv_value = lv_me_field    ) )
+                ( |"source_texts":[{ lv_me_src_json }]| )
+                ( |"target_texts":[{ lv_me_tgt_json }]| )
+                ( zcl_vsp_utils=>json_bool( iv_key = 'has_difference' iv_value = lv_me_any_diff ) )
+              ) ) ).
+            ENDLOOP.
+
           WHEN OTHERS.
             rs_response = zcl_vsp_utils=>build_error(
               iv_id = is_message-id iv_code = 'UNSUPPORTED_TARGET'
-              iv_message = |compare_translations: target_type '{ lv_target_type }' not supported. Use: data_element, data_definition (with fields[])| ).
+              iv_message = |compare_translations: target_type '{ lv_target_type }' not supported. Use: data_element, data_definition (with fields[]), metadata_extension (with fields[])| ).
             RETURN.
         ENDCASE.
 
@@ -579,8 +822,6 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD parse_string_array.
-    " Extract quoted string values from a JSON array content fragment
-    " Input: '"short_field_label","heading"'  →  [ "short_field_label", "heading" ]
     FIND ALL OCCURRENCES OF PCRE '"([^"]*)"' IN iv_content RESULTS DATA(lt_matches).
     LOOP AT lt_matches INTO DATA(ls_match).
       DATA(lv_off) = ls_match-submatches[ 1 ]-offset.
@@ -599,18 +840,39 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
 
   METHOD get_de_text_attr.
     CASE iv_name.
-      WHEN 'short_field_label'.  ro_attr = xco_cp_data_element=>text_attribute->short_field_label.
-      WHEN 'medium_field_label'. ro_attr = xco_cp_data_element=>text_attribute->medium_field_label.
-      WHEN 'long_field_label'.   ro_attr = xco_cp_data_element=>text_attribute->long_field_label.
-      WHEN 'heading'.            ro_attr = xco_cp_data_element=>text_attribute->heading.
+      WHEN 'short_field_label'.    ro_attr = xco_cp_data_element=>text_attribute->short_field_label.
+      WHEN 'medium_field_label'.   ro_attr = xco_cp_data_element=>text_attribute->medium_field_label.
+      WHEN 'long_field_label'.     ro_attr = xco_cp_data_element=>text_attribute->long_field_label.
+      WHEN 'heading_field_label'.  ro_attr = xco_cp_data_element=>text_attribute->heading_field_label.
     ENDCASE.
   ENDMETHOD.
 
   METHOD get_ddls_field_attr.
     CASE iv_name.
       WHEN 'endusertext_label'.     ro_attr = xco_cp_data_definition=>text_attribute->field->endusertext_label.
-      WHEN 'endusertext_heading'.   ro_attr = xco_cp_data_definition=>text_attribute->field->endusertext_heading.
       WHEN 'endusertext_quickinfo'. ro_attr = xco_cp_data_definition=>text_attribute->field->endusertext_quickinfo.
+    ENDCASE.
+  ENDMETHOD.
+
+
+  METHOD get_me_field_attr.
+    CASE iv_name.
+      WHEN 'endusertext_label'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->endusertext_label.
+      WHEN 'endusertext_quickinfo'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->endusertext_quickinfo.
+      WHEN 'ui_lineitem_label'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->ui_lineitem_label( 1 ).
+      WHEN 'ui_identification_label'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->ui_identification_label( 1 ).
+      WHEN 'ui_fieldgroup_label'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->ui_fieldgroup_label( 1 ).
+      WHEN 'ui_facet_label'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->ui_facet_label( 1 ).
+      WHEN 'ui_fieldgroup_grouplabel'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->ui_fieldgroup_grouplabel( 1 ).
+      WHEN 'consumption_valuehelpdef_label'.
+        ro_attr = xco_metadata_extension=>text_attribute->field->consumption_valuehelpdef_label( 1 ).
     ENDCASE.
   ENDMETHOD.
 
