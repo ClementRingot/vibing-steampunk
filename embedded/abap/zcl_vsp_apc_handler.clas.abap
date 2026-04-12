@@ -52,12 +52,20 @@ ENDCLASS.
 CLASS zcl_vsp_apc_handler IMPLEMENTATION.
 
   METHOD class_constructor.
-    APPEND NEW zcl_vsp_rfc_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_git_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_report_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_i18n_service( ) TO gt_services.
+    " Dynamic discovery: find all classes implementing ZIF_VSP_SERVICE
+    SELECT clsname FROM seometarel
+      WHERE refclsname = 'ZIF_VSP_SERVICE'
+      AND reltype = 1
+      INTO TABLE @DATA(lt_impls).
+
+    LOOP AT lt_impls INTO DATA(ls_impl).
+      TRY.
+          DATA lo_service TYPE REF TO zif_vsp_service.
+          CREATE OBJECT lo_service TYPE (ls_impl-clsname).
+          APPEND lo_service TO gt_services.
+        CATCH cx_root ##NO_HANDLER.
+      ENDTRY.
+    ENDLOOP.
   ENDMETHOD.
 
   METHOD if_apc_wsp_extension~on_start.
@@ -72,10 +80,17 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     ENDTRY.
     mv_session_id = lv_uuid.
 
+    " Build domains list dynamically from registered services
+    DATA lt_domains TYPE string_table.
+    LOOP AT gt_services INTO DATA(lo_svc).
+      APPEND lo_svc->get_domain( ) TO lt_domains.
+    ENDLOOP.
+    DATA(lv_domains_json) = concat_lines_of( table = lt_domains sep = '","' ).
+
     DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
       ( zcl_vsp_utils=>json_str( iv_key = 'session' iv_value = mv_session_id ) )
       ( zcl_vsp_utils=>json_str( iv_key = 'version' iv_value = '2.3.0' ) )
-      ( |"domains":["rfc","debug","amdp","git","report","i18n"]| )
+      ( |"domains":["{ lv_domains_json }"]| )
     ) ) ).
 
     send_response( VALUE #(
@@ -110,7 +125,6 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD if_apc_wsp_extension~on_error.
-    " Log error - could extend with more sophisticated handling
   ENDMETHOD.
 
   METHOD parse_message.
@@ -119,12 +133,10 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
         FIND PCRE '"domain"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-domain.
         FIND PCRE '"action"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-action.
 
-        " Handle nested JSON in params by finding the balanced braces
         DATA(lv_params_start) = find( val = iv_text sub = '"params"' ).
         IF lv_params_start >= 0.
           DATA(lv_brace_start) = find( val = iv_text off = lv_params_start sub = '{' ).
           IF lv_brace_start >= 0.
-            " Count braces to find the matching closing brace
             DATA(lv_depth) = 0.
             DATA(lv_pos) = lv_brace_start.
             DATA(lv_len) = strlen( iv_text ).
@@ -237,9 +249,7 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
   ENDMETHOD.
 
-
   METHOD handle_abap_help.
-    " Get ABAP keyword documentation via CL_ABAP_DOCU
     DATA(lv_keyword) = zcl_vsp_utils=>extract_param(
       iv_params = is_message-params
       iv_name   = 'keyword'
@@ -254,33 +264,29 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Convert to uppercase for CL_ABAP_DOCU lookup
     TRANSLATE lv_keyword TO UPPER CASE.
 
-    " Retrieve ABAP documentation
     DATA lt_html TYPE abapdocu_html_tab.
     DATA lv_html TYPE string.
 
     TRY.
         cl_abap_docu=>convert_itf_to_html(
           EXPORTING
-            area   = 'ABEN'                    " ABAP English documentation
+            area   = 'ABEN'
             name   = CONV #( lv_keyword )
             langu  = sy-langu
           IMPORTING
             html   = lt_html ).
 
-        " Concatenate HTML lines
         LOOP AT lt_html INTO DATA(ls_html_line).
           lv_html = lv_html && ls_html_line.
         ENDLOOP.
 
       CATCH cx_abap_docu_conversion INTO DATA(lx_docu_error).
-        " Try generic error message area if keyword not found in ABEN
         TRY.
             cl_abap_docu=>convert_itf_to_html(
               EXPORTING
-                area   = 'AB'                  " Alternative area
+                area   = 'AB'
                 name   = CONV #( lv_keyword )
                 langu  = sy-langu
               IMPORTING
@@ -291,12 +297,10 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
             ENDLOOP.
 
           CATCH cx_abap_docu_conversion INTO DATA(lx_error2).
-            " Documentation not found - return empty
             lv_html = ''.
         ENDTRY.
     ENDTRY.
 
-    " Build response
     DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
       ( zcl_vsp_utils=>json_str( iv_key = 'keyword' iv_value = lv_keyword ) )
       ( zcl_vsp_utils=>json_str( iv_key = 'html' iv_value = lv_html ) )
