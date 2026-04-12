@@ -101,11 +101,36 @@ func runCRConfigAudit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Data-side: %d unique tables with transported rows\n", len(custTables))
 
+	// v1.2a: DDIC metadata chain expansion. Walk every in-scope table through
+	// DD03L→DD04L→DD01L→DD07L to collect every data element / domain / check
+	// table / fixed-value set the code transitively depends on, then pull
+	// the CR's own metadata objects from E071 and cross-match.
+	allTablesInScope := make(map[string]bool)
+	for t := range codeTables {
+		allTablesInScope[t] = true
+	}
+	for t := range custTables {
+		allTablesInScope[t] = true
+	}
+	reachable, err := walkDDICMetadata(ctx, client, allTablesInScope)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "DDIC metadata reachable from scope: %d objects\n", len(reachable))
+
+	inCR, err := collectMetadataFromCR(ctx, client, allTRs)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "DDIC metadata in CR transports: %d objects\n", len(inCR))
+
 	report := &graph.CRConfigAuditReport{
-		CRID:       crID,
-		Transports: *split,
-		CodeTables: codeTables,
-		CustTables: custTables,
+		CRID:              crID,
+		Transports:        *split,
+		CodeTables:        codeTables,
+		CustTables:        custTables,
+		MetadataReachable: reachable,
+		MetadataInCR:      inCR,
 	}
 
 	graph.FinalizeCRConfigAuditReport(report)
@@ -303,6 +328,227 @@ func collectCodeTables(ctx context.Context, client *adt.Client, wbTRs []string) 
 		}
 	}
 	return result, deletedRefs, nil
+}
+
+// walkDDICMetadata expands the DDIC dependency chain for every table in
+// scope: DD03L (fields → data element) → DD04L (data element → domain) →
+// DD01L (domain → check table) → DD07L (domain → fixed values).
+//
+// Returns a map keyed by "KIND:NAME" (e.g. "DTEL:ZFOO_DTEL") to
+// graph.MetadataRef. The key shape matches graph.FinalizeCRConfigAuditReport
+// which pairs this map against the CR's transported metadata to produce
+// Covered/Missing/Orphan buckets on the metadata plane.
+//
+// Query plan (no regex, everything through DDIC tables):
+//   1. DD03L WHERE TABNAME IN (<batch>) → (TABNAME, FIELDNAME, ROLLNAME)
+//   2. DD04L WHERE ROLLNAME IN (<batch>) → (ROLLNAME, DOMNAME)
+//   3. DD01L WHERE DOMNAME IN (<batch>) → (DOMNAME, ENTITYTAB)   [check table]
+//   4. DD07L WHERE DOMNAME IN (<batch>) → (DOMNAME, DOMVALUE_L)  [fixed values]
+//
+// Batched to 5 names per IN clause to respect SAP freestyle 255-char limit.
+func walkDDICMetadata(ctx context.Context, client *adt.Client, tables map[string]bool) (map[string]graph.MetadataRef, error) {
+	result := make(map[string]graph.MetadataRef)
+	if len(tables) == 0 {
+		return result, nil
+	}
+
+	tableList := make([]string, 0, len(tables))
+	for t := range tables {
+		tableList = append(tableList, t)
+	}
+	sort.Strings(tableList)
+
+	fmt.Fprintf(os.Stderr, "Walking DDIC metadata for %d tables (DD03L→DD04L→DD01L→DD07L)...\n", len(tableList))
+	prog := newProgress(4, 1)
+
+	// --- Step 1: DD03L (table → fields → data element) ---
+	prog.tick(0, "DD03L")
+	type fieldEdge struct {
+		table    string
+		field    string
+		rollname string
+	}
+	var fields []fieldEdge
+	dd03Rows, err := runChunkedINQuery(ctx, client,
+		"SELECT TABNAME, FIELDNAME, ROLLNAME FROM DD03L WHERE AS4LOCAL = 'A' AND TABNAME IN (%s)",
+		tableList)
+	if err != nil {
+		return nil, fmt.Errorf("DD03L query failed: %w", err)
+	}
+	for _, row := range dd03Rows {
+		tab := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["TABNAME"])))
+		fld := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["FIELDNAME"])))
+		rn := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["ROLLNAME"])))
+		if rn == "" {
+			continue
+		}
+		fields = append(fields, fieldEdge{tab, fld, rn})
+	}
+
+	// Unique ROLLNAMEs for the next step, keyed so we can remember the path.
+	rollPaths := make(map[string]fieldEdge) // first seen path per DTEL wins — we keep one representative
+	for _, f := range fields {
+		if _, ok := rollPaths[f.rollname]; !ok {
+			rollPaths[f.rollname] = f
+		}
+		// Record the DTEL node itself, pathed back to the first table that introduced it.
+		key := "DTEL:" + f.rollname
+		if _, ok := result[key]; !ok {
+			result[key] = graph.MetadataRef{
+				Kind:      "DTEL",
+				Name:      f.rollname,
+				FromTable: f.table,
+				Path:      []string{"TABL:" + f.table, "FIELD:" + f.field, "DTEL:" + f.rollname},
+			}
+		}
+	}
+
+	// --- Step 2: DD04L (DTEL → domain) ---
+	prog.tick(1, "DD04L")
+	rollList := make([]string, 0, len(rollPaths))
+	for r := range rollPaths {
+		rollList = append(rollList, r)
+	}
+	sort.Strings(rollList)
+	dd04Rows, err := runChunkedINQuery(ctx, client,
+		"SELECT ROLLNAME, DOMNAME FROM DD04L WHERE AS4LOCAL = 'A' AND ROLLNAME IN (%s)",
+		rollList)
+	if err != nil {
+		return nil, fmt.Errorf("DD04L query failed: %w", err)
+	}
+	domPaths := make(map[string]fieldEdge) // domain → its first-seen field edge
+	for _, row := range dd04Rows {
+		rn := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["ROLLNAME"])))
+		dom := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DOMNAME"])))
+		if dom == "" {
+			continue
+		}
+		origin := rollPaths[rn]
+		if _, ok := domPaths[dom]; !ok {
+			domPaths[dom] = origin
+		}
+		key := "DOMA:" + dom
+		if _, ok := result[key]; !ok {
+			result[key] = graph.MetadataRef{
+				Kind:      "DOMA",
+				Name:      dom,
+				FromTable: origin.table,
+				Path: []string{
+					"TABL:" + origin.table,
+					"FIELD:" + origin.field,
+					"DTEL:" + rn,
+					"DOMA:" + dom,
+				},
+			}
+		}
+	}
+
+	// --- Step 3: DD01L (domain → check table) ---
+	prog.tick(2, "DD01L")
+	domList := make([]string, 0, len(domPaths))
+	for d := range domPaths {
+		domList = append(domList, d)
+	}
+	sort.Strings(domList)
+	dd01Rows, err := runChunkedINQuery(ctx, client,
+		"SELECT DOMNAME, ENTITYTAB FROM DD01L WHERE AS4LOCAL = 'A' AND DOMNAME IN (%s)",
+		domList)
+	if err != nil {
+		return nil, fmt.Errorf("DD01L query failed: %w", err)
+	}
+	for _, row := range dd01Rows {
+		dom := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DOMNAME"])))
+		chk := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["ENTITYTAB"])))
+		if chk == "" {
+			continue
+		}
+		origin := domPaths[dom]
+		key := "CHKTAB:" + chk
+		if _, ok := result[key]; !ok {
+			result[key] = graph.MetadataRef{
+				Kind:      "CHKTAB",
+				Name:      chk,
+				FromTable: origin.table,
+				Path: []string{
+					"TABL:" + origin.table,
+					"DOMA:" + dom,
+					"CHKTAB:" + chk,
+				},
+			}
+		}
+	}
+
+	// --- Step 4: DD07L (domain → fixed values) ---
+	// We record one FIXVAL entry per domain — the presence of a fixed-value
+	// set is what matters for the audit. Individual values are part of the
+	// v2a value-level pass, not here.
+	prog.tick(3, "DD07L")
+	dd07Rows, err := runChunkedINQuery(ctx, client,
+		"SELECT DOMNAME FROM DD07L WHERE AS4LOCAL = 'A' AND DOMNAME IN (%s)",
+		domList)
+	if err != nil {
+		return nil, fmt.Errorf("DD07L query failed: %w", err)
+	}
+	seenFixval := make(map[string]bool)
+	for _, row := range dd07Rows {
+		dom := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DOMNAME"])))
+		if dom == "" || seenFixval[dom] {
+			continue
+		}
+		seenFixval[dom] = true
+		origin := domPaths[dom]
+		key := "FIXVAL:" + dom
+		result[key] = graph.MetadataRef{
+			Kind:      "FIXVAL",
+			Name:      dom,
+			FromTable: origin.table,
+			Path: []string{
+				"TABL:" + origin.table,
+				"DOMA:" + dom,
+				"FIXVAL:" + dom,
+			},
+		}
+	}
+
+	prog.done(4)
+	return result, nil
+}
+
+// collectMetadataFromCR scans E071 for DDIC metadata object types the CR is
+// transporting (DTEL, DOMA, SHLP). Returns a map keyed by "KIND:NAME" so the
+// caller can cross-match it against walkDDICMetadata's output. Path for these
+// entries is just ["<KIND>:<NAME>"] — the CR itself is the trace.
+func collectMetadataFromCR(ctx context.Context, client *adt.Client, trList []string) (map[string]graph.MetadataRef, error) {
+	result := make(map[string]graph.MetadataRef)
+	if len(trList) == 0 {
+		return result, nil
+	}
+	rows, err := runChunkedINQuery(ctx, client,
+		"SELECT OBJECT, OBJ_NAME FROM E071 WHERE PGMID = 'R3TR' AND OBJECT IN ('DTEL','DOMA','SHLP') AND TRKORR IN (%s)",
+		trList)
+	if err != nil {
+		return nil, fmt.Errorf("E071 metadata query failed: %w", err)
+	}
+	for _, row := range rows {
+		ot := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"])))
+		nm := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])))
+		if ot == "" || nm == "" {
+			continue
+		}
+		kind := ot
+		if ot == "SHLP" {
+			kind = "SHLP"
+		}
+		key := kind + ":" + nm
+		if _, ok := result[key]; !ok {
+			result[key] = graph.MetadataRef{
+				Kind: kind,
+				Name: nm,
+				Path: []string{kind + ":" + nm},
+			}
+		}
+	}
+	return result, nil
 }
 
 // collectCustTables walks E071K for every TR in the CR (both workbench and
@@ -896,8 +1142,14 @@ func printCRConfigAuditText(r *graph.CRConfigAuditReport, details bool) {
 	if !r.Summary.Aligned {
 		status = "NOT ALIGNED"
 	}
-	fmt.Printf("  Covered: %d   Missing: %d   Orphan: %d   →  %s\n\n",
-		r.Summary.Covered, r.Summary.Missing, r.Summary.Orphan, status)
+	fmt.Printf("  Tables:   Covered: %d   Missing: %d   Orphan: %d\n",
+		r.Summary.Covered, r.Summary.Missing, r.Summary.Orphan)
+	if r.Summary.MetadataReachable > 0 || r.Summary.MetadataInCR > 0 {
+		fmt.Printf("  Metadata: Covered: %d   Missing: %d   Orphan: %d   (reachable: %d, in CR: %d)\n",
+			r.Summary.MetadataCovered, r.Summary.MetadataMissing, r.Summary.MetadataOrphan,
+			r.Summary.MetadataReachable, r.Summary.MetadataInCR)
+	}
+	fmt.Printf("  →  %s\n\n", status)
 
 	if len(r.Missing) > 0 {
 		fmt.Println("MISSING — custom tables read by code, not in any CR transport:")
@@ -937,6 +1189,33 @@ func printCRConfigAuditText(r *graph.CRConfigAuditReport, details bool) {
 					fmt.Printf("    [code] ← %s  (%s, %s)\n", ref.FromObject, ref.FromInclude, ref.Source)
 				}
 			}
+		}
+		fmt.Println()
+	}
+
+	if len(r.MetadataMissing) > 0 {
+		fmt.Println("METADATA MISSING — DTEL/DOMA/CheckTable reachable from scope code but not in CR:")
+		for _, m := range r.MetadataMissing {
+			fmt.Printf("  %-6s %-30s  ← %s\n", m.Kind, m.Name, m.FromTable)
+			if details {
+				fmt.Printf("           path: %s\n", strings.Join(m.Path, " → "))
+			}
+		}
+		fmt.Println()
+	}
+
+	if len(r.MetadataOrphan) > 0 {
+		fmt.Println("METADATA ORPHAN — DDIC metadata in CR not reachable from any scope table:")
+		for _, m := range r.MetadataOrphan {
+			fmt.Printf("  %-6s %s\n", m.Kind, m.Name)
+		}
+		fmt.Println()
+	}
+
+	if details && len(r.MetadataCovered) > 0 {
+		fmt.Printf("METADATA COVERED (%d):\n", len(r.MetadataCovered))
+		for _, m := range r.MetadataCovered {
+			fmt.Printf("  %-6s %-30s  path: %s\n", m.Kind, m.Name, strings.Join(m.Path, " → "))
 		}
 		fmt.Println()
 	}

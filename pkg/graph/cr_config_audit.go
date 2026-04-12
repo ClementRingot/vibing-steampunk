@@ -49,6 +49,17 @@ type CoverageEntry struct {
 	CustRows      []TableCustRow `json:"cust_rows,omitempty"`
 }
 
+// MetadataRef is a DDIC metadata object (data element, domain, check table,
+// search help) reached by walking the DD03L → DD04L → DD01L → DD07L chain
+// out of a table in scope. Every entry records the path that got us here,
+// so the report can explain "why is this DTEL in the graph?".
+type MetadataRef struct {
+	Kind      string   `json:"kind"`       // "DTEL" | "DOMA" | "CHKTAB" | "SHLP" | "FIXVAL"
+	Name      string   `json:"name"`       // uppercased object name
+	FromTable string   `json:"from_table"` // the table the chain started from (first hop)
+	Path      []string `json:"path"`       // step-by-step trace, e.g. ["TABL:ZFOO","FIELD:KEY","DTEL:ZDTEL","DOMA:ZDOM"]
+}
+
 // CRConfigAuditReport is the final, rendered audit output.
 type CRConfigAuditReport struct {
 	CRID       string                    `json:"cr_id"`
@@ -67,21 +78,41 @@ type CRConfigAuditReport struct {
 	// Orphan: table has rows in a CR transport but no code in the CR reads it.
 	Orphan []CoverageEntry `json:"orphan"`
 
+	// DDIC metadata chain findings (v1.2a+). Collected by walking every table
+	// in code scope through DD03L/DD04L/DD01L/DD07L. Missing = reachable from
+	// scope-side code but not in CR; Orphan = transported but not reachable;
+	// Covered = both.
+	MetadataReachable map[string]MetadataRef `json:"metadata_reachable,omitempty"` // Kind:Name → ref
+	MetadataInCR      map[string]MetadataRef `json:"metadata_in_cr,omitempty"`     // Kind:Name → ref
+	MetadataCovered   []MetadataRef          `json:"metadata_covered,omitempty"`
+	MetadataMissing   []MetadataRef          `json:"metadata_missing,omitempty"`
+	MetadataOrphan    []MetadataRef          `json:"metadata_orphan,omitempty"`
+
 	Summary CRConfigAuditSummary `json:"summary"`
 }
 
 // CRConfigAuditSummary provides top-line numbers for the report.
 type CRConfigAuditSummary struct {
-	WorkbenchTRs      int  `json:"workbench_trs"`
-	CustomizingTRs    int  `json:"customizing_trs"`
-	TablesReadByCode  int  `json:"tables_read_by_code"`
-	TablesCustomRead  int  `json:"tables_custom_read"`
+	WorkbenchTRs       int `json:"workbench_trs"`
+	CustomizingTRs     int `json:"customizing_trs"`
+	TablesReadByCode   int `json:"tables_read_by_code"`
+	TablesCustomRead   int `json:"tables_custom_read"`
 	TablesStandardRead int `json:"tables_standard_read"`
-	TablesInCustTRs   int  `json:"tables_in_cust_trs"`
-	Covered           int  `json:"covered"`
-	Missing           int  `json:"missing"`
-	Orphan            int  `json:"orphan"`
-	Aligned           bool `json:"aligned"`
+	TablesInCustTRs    int `json:"tables_in_cust_trs"`
+	Covered            int `json:"covered"`
+	Missing            int `json:"missing"`
+	Orphan             int `json:"orphan"`
+
+	// DDIC metadata chain (v1.2a). Counts mirror the table buckets but live
+	// on the metadata plane: data elements, domains, check tables, search
+	// helps, domain fixed-value sets.
+	MetadataReachable int `json:"metadata_reachable"`
+	MetadataInCR      int `json:"metadata_in_cr"`
+	MetadataCovered   int `json:"metadata_covered"`
+	MetadataMissing   int `json:"metadata_missing"`
+	MetadataOrphan    int `json:"metadata_orphan"`
+
+	Aligned bool `json:"aligned"` // Missing == 0 && Orphan == 0 && MetadataMissing == 0
 }
 
 // FinalizeCRConfigAuditReport cross-matches CodeTables against CustTables and
@@ -147,6 +178,34 @@ func FinalizeCRConfigAuditReport(r *CRConfigAuditReport) {
 		})
 	}
 
+	// Metadata cross-match: iterate reachable (from code-side tables) vs
+	// in-CR (from E071 R3TR rows of DTEL/DOMA/SHLP/etc.). Only run if caller
+	// populated the two input maps; leave buckets empty otherwise so v1.2a
+	// can be disabled by passing nothing.
+	reachableKeys := sortedKeys(r.MetadataReachable)
+	inCRKeys := sortedKeys(r.MetadataInCR)
+	reachableSet := make(map[string]bool, len(reachableKeys))
+	for _, k := range reachableKeys {
+		reachableSet[k] = true
+	}
+	inCRSet := make(map[string]bool, len(inCRKeys))
+	for _, k := range inCRKeys {
+		inCRSet[k] = true
+	}
+	for _, k := range reachableKeys {
+		ref := r.MetadataReachable[k]
+		if inCRSet[k] {
+			r.MetadataCovered = append(r.MetadataCovered, ref)
+		} else if !IsStandardObject(ref.Name) {
+			r.MetadataMissing = append(r.MetadataMissing, ref)
+		}
+	}
+	for _, k := range inCRKeys {
+		if !reachableSet[k] {
+			r.MetadataOrphan = append(r.MetadataOrphan, r.MetadataInCR[k])
+		}
+	}
+
 	r.Summary = CRConfigAuditSummary{
 		WorkbenchTRs:       len(r.Transports.WorkbenchTRs),
 		CustomizingTRs:     len(r.Transports.CustomizingTRs),
@@ -157,7 +216,12 @@ func FinalizeCRConfigAuditReport(r *CRConfigAuditReport) {
 		Covered:            len(r.Covered),
 		Missing:            len(r.Missing),
 		Orphan:             len(r.Orphan),
-		Aligned:            len(r.Missing) == 0 && len(r.Orphan) == 0,
+		MetadataReachable:  len(reachableKeys),
+		MetadataInCR:       len(inCRKeys),
+		MetadataCovered:    len(r.MetadataCovered),
+		MetadataMissing:    len(r.MetadataMissing),
+		MetadataOrphan:     len(r.MetadataOrphan),
+		Aligned:            len(r.Missing) == 0 && len(r.Orphan) == 0 && len(r.MetadataMissing) == 0,
 	}
 }
 

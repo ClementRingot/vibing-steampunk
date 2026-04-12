@@ -97,6 +97,44 @@ func TestFinalizeCRConfigAuditReport_AllAligned(t *testing.T) {
 	}
 }
 
+func TestFinalizeCRConfigAuditReport_MetadataBuckets(t *testing.T) {
+	r := &CRConfigAuditReport{
+		CRID: "JIRA-1002",
+		MetadataReachable: map[string]MetadataRef{
+			// Covered: reachable from code AND transported in CR.
+			"DTEL:ZTEST_COVERED": {Kind: "DTEL", Name: "ZTEST_COVERED", FromTable: "ZTEST_TABLE"},
+			// Missing: reachable but not in CR, and custom.
+			"DTEL:ZTEST_MISSING": {Kind: "DTEL", Name: "ZTEST_MISSING", FromTable: "ZTEST_TABLE"},
+			// SAP-std DTEL reachable — must NOT become Missing.
+			"DTEL:MATNR": {Kind: "DTEL", Name: "MATNR", FromTable: "MARA"},
+		},
+		MetadataInCR: map[string]MetadataRef{
+			"DTEL:ZTEST_COVERED": {Kind: "DTEL", Name: "ZTEST_COVERED"},
+			// Orphan: in CR but not reachable from any scope table.
+			"DOMA:ZTEST_ORPHAN_DOM": {Kind: "DOMA", Name: "ZTEST_ORPHAN_DOM"},
+		},
+	}
+	FinalizeCRConfigAuditReport(r)
+	if got, want := r.Summary.MetadataCovered, 1; got != want {
+		t.Errorf("MetadataCovered = %d, want %d", got, want)
+	}
+	if got, want := r.Summary.MetadataMissing, 1; got != want {
+		t.Errorf("MetadataMissing = %d, want %d", got, want)
+	}
+	if got, want := r.Summary.MetadataOrphan, 1; got != want {
+		t.Errorf("MetadataOrphan = %d, want %d", got, want)
+	}
+	if r.Summary.Aligned {
+		t.Error("Aligned = true, want false (MetadataMissing > 0)")
+	}
+	// MATNR must be in neither Missing nor Covered (no corresponding CR entry).
+	for _, m := range r.MetadataMissing {
+		if m.Name == "MATNR" {
+			t.Errorf("MATNR wrongly flagged as MetadataMissing (SAP standard)")
+		}
+	}
+}
+
 func TestFinalizeCRConfigAuditReport_CustomIgnoredWhenOnlyStandardRead(t *testing.T) {
 	// Edge case: code only reads SAP standard, no custom reads, no transports.
 	// Must report aligned with zero Missing even though Covered is zero.
