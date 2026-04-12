@@ -8,6 +8,10 @@ CLASS zcl_vsp_i18n_service DEFINITION
     INTERFACES zif_vsp_service.
 
   PRIVATE SECTION.
+    "! Cached flag: abap_true if on-premise (xco_i18n available as fallback)
+    CLASS-DATA gv_on_premise TYPE abap_bool.
+    CLASS-DATA gv_detected   TYPE abap_bool.
+
     METHODS handle_get_translation
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
@@ -23,6 +27,17 @@ CLASS zcl_vsp_i18n_service DEFINITION
     METHODS handle_compare_translations
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
+    "! Detect if system is on-premise (xco_i18n exists) or BTP/Cloud
+    METHODS detect_system.
+
+    "! Check if object is visible to CP APIs (xco_cp_abap_repository->exists)
+    "! On BTP always true; on on-premise checks SWC Cloud config
+    METHODS should_use_cp
+      IMPORTING iv_target_type   TYPE string
+                iv_object_name   TYPE string
+                iv_pool_type     TYPE string OPTIONAL
+      RETURNING VALUE(rv_use_cp) TYPE abap_bool.
 
     METHODS parse_string_array
       IMPORTING iv_content        TYPE string
@@ -101,6 +116,8 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     TRANSLATE lv_object_name TO UPPER CASE.
     TRANSLATE lv_language TO UPPER CASE.
 
+    DATA(lv_use_cp) = should_use_cp( iv_target_type = lv_target_type iv_object_name = lv_object_name iv_pool_type = lv_pool_type ).
+
     FIND PCRE '"text_attributes"\s*:\s*\[([^\]]*)\]' IN is_message-params SUBMATCHES DATA(lv_attrs_str).
     IF sy-subrc = 0 AND lv_attrs_str IS NOT INITIAL.
       lt_attributes = parse_string_array( lv_attrs_str ).
@@ -112,7 +129,10 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
         CASE lv_target_type.
 
           WHEN 'data_element'.
-            DATA(lo_de_target) = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            DATA(lo_de_target) = xco_cp_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            IF lv_use_cp = abap_false.
+              lo_de_target = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            ENDIF.
             DATA lt_de_attrs TYPE string_table.
             IF lt_attributes IS INITIAL.
               APPEND 'short_field_label'    TO lt_de_attrs.
@@ -143,10 +163,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             ENDLOOP.
 
           WHEN 'domain'.
-            DATA(lo_dom_target) = xco_i18n=>target->domain->fixed_value(
+            DATA(lo_dom_target) = xco_cp_i18n=>target->domain->fixed_value(
               iv_domain_name = CONV sxco_ad_object_name( lv_object_name )
               iv_lower_limit = CONV if_xco_domain_fixed_value=>tv_lower_limit( lv_fixed_value )
             ).
+            IF lv_use_cp = abap_false.
+              lo_dom_target = xco_i18n=>target->domain->fixed_value(
+                iv_domain_name = CONV sxco_ad_object_name( lv_object_name )
+                iv_lower_limit = CONV if_xco_domain_fixed_value=>tv_lower_limit( lv_fixed_value )
+              ).
+            ENDIF.
             DATA lt_dom_ta TYPE sxco_t_domain_text_attributes.
             APPEND xco_cp_domain=>text_attribute->fixed_value_description TO lt_dom_ta.
             DATA(lo_dom_trans) = lo_dom_target->get_translation(
@@ -161,7 +187,10 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
 
           WHEN 'data_definition'.
             IF lv_field_name IS INITIAL.
-              DATA(lo_ddls_entity) = xco_i18n=>target->data_definition->entity( CONV sxco_cds_object_name( lv_object_name ) ).
+              DATA(lo_ddls_entity) = xco_cp_i18n=>target->data_definition->entity( CONV sxco_cds_object_name( lv_object_name ) ).
+              IF lv_use_cp = abap_false.
+                lo_ddls_entity = xco_i18n=>target->data_definition->entity( CONV sxco_cds_object_name( lv_object_name ) ).
+              ENDIF.
               DATA lt_ent_ta TYPE sxco_t_ddef_ent_text_attributs.
               APPEND xco_cp_data_definition=>text_attribute->entity->endusertext_label TO lt_ent_ta.
               DATA(lo_ent_trans) = lo_ddls_entity->get_translation(
@@ -175,10 +204,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               lv_texts_json = append_text_entry( iv_json = lv_texts_json iv_attribute = 'endusertext_label' iv_value = lv_ent_val ).
             ELSE.
               TRANSLATE lv_field_name TO LOWER CASE.
-              DATA(lo_ddls_field) = xco_i18n=>target->data_definition->field(
+              DATA(lo_ddls_field) = xco_cp_i18n=>target->data_definition->field(
                 iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
                 iv_field_name  = CONV sxco_cds_field_name( lv_field_name )
               ).
+              IF lv_use_cp = abap_false.
+                lo_ddls_field = xco_i18n=>target->data_definition->field(
+                  iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
+                  iv_field_name  = CONV sxco_cds_field_name( lv_field_name )
+                ).
+              ENDIF.
               DATA lt_fld_attrs TYPE string_table.
               IF lt_attributes IS INITIAL.
                 APPEND 'endusertext_label'     TO lt_fld_attrs.
@@ -214,10 +249,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 iv_message = 'field_name is required for metadata_extension target' ).
               RETURN.
             ENDIF.
-            DATA(lo_ddlx_target) = xco_i18n=>target->metadata_extension->field(
+            DATA(lo_ddlx_target) = xco_cp_i18n=>target->metadata_extension->field(
               iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
               iv_field_name              = CONV sxco_cds_field_name( lv_field_name )
             ).
+            IF lv_use_cp = abap_false.
+              lo_ddlx_target = xco_i18n=>target->metadata_extension->field(
+                iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
+                iv_field_name              = CONV sxco_cds_field_name( lv_field_name )
+              ).
+            ENDIF.
             DATA lt_me_attr_names TYPE string_table.
             IF lt_attributes IS INITIAL.
               APPEND 'endusertext_label'       TO lt_me_attr_names.
@@ -257,10 +298,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 iv_message = 'message_number is required for message_class target' ).
               RETURN.
             ENDIF.
-            DATA(lo_mc_target) = xco_i18n=>target->message_class->message(
+            DATA(lo_mc_target) = xco_cp_i18n=>target->message_class->message(
               iv_message_class_name = CONV sxco_mc_object_name( lv_object_name )
               iv_message_number     = CONV if_xco_mc_message=>tv_number( lv_msg_number )
             ).
+            IF lv_use_cp = abap_false.
+              lo_mc_target = xco_i18n=>target->message_class->message(
+                iv_message_class_name = CONV sxco_mc_object_name( lv_object_name )
+                iv_message_number     = CONV if_xco_mc_message=>tv_number( lv_msg_number )
+              ).
+            ENDIF.
             DATA lt_mc_ta TYPE sxco_t_mc_text_attributes.
             APPEND xco_cp_message_class=>text_attribute->message_short_text TO lt_mc_ta.
             DATA(lo_mc_trans) = lo_mc_target->get_translation(
@@ -278,10 +325,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             APPEND xco_cp_text_pool=>text_attribute->text_element_text TO lt_tp_ta.
             DATA lv_tp_text TYPE string.
             IF lv_pool_type = 'class' OR lv_pool_type IS INITIAL.
-              DATA(lo_cls_tp) = xco_i18n=>target->text_pool->class_text_symbol(
+              DATA(lo_cls_tp) = xco_cp_i18n=>target->text_pool->class_text_symbol(
                 iv_class_name     = CONV sxco_ao_object_name( lv_object_name )
                 iv_text_symbol_id = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
+              IF lv_use_cp = abap_false.
+                lo_cls_tp = xco_i18n=>target->text_pool->class_text_symbol(
+                  iv_class_name     = CONV sxco_ao_object_name( lv_object_name )
+                  iv_text_symbol_id = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
+                ).
+              ENDIF.
               DATA(lo_cls_trans) = lo_cls_tp->get_translation(
                 io_language        = lo_language
                 it_text_attributes = lt_tp_ta
@@ -290,10 +343,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 lv_tp_text = lo_cls_trans->texts[ 1 ]->get_string_value( ).
               ENDIF.
             ELSE.
-              DATA(lo_fg_tp) = xco_i18n=>target->text_pool->function_group_text_symbol(
+              DATA(lo_fg_tp) = xco_cp_i18n=>target->text_pool->function_group_text_symbol(
                 iv_function_group_name = CONV sxco_fg_object_name( lv_object_name )
                 iv_text_symbol_id      = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
+              IF lv_use_cp = abap_false.
+                lo_fg_tp = xco_i18n=>target->text_pool->function_group_text_symbol(
+                  iv_function_group_name = CONV sxco_fg_object_name( lv_object_name )
+                  iv_text_symbol_id      = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
+                ).
+              ENDIF.
               DATA(lo_fg_trans) = lo_fg_tp->get_translation(
                 io_language        = lo_language
                 it_text_attributes = lt_tp_ta
@@ -349,6 +408,8 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     TRANSLATE lv_language TO UPPER CASE.
     TRANSLATE lv_transport TO UPPER CASE.
 
+    DATA(lv_use_cp) = should_use_cp( iv_target_type = lv_target_type iv_object_name = lv_object_name iv_pool_type = lv_pool_type ).
+
     FIND PCRE '"texts"\s*:\s*(\[[^\]]*\])' IN is_message-params SUBMATCHES DATA(lv_texts_str).
     IF sy-subrc <> 0 OR lv_texts_str IS INITIAL.
       rs_response = zcl_vsp_utils=>build_error(
@@ -383,7 +444,10 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
         CASE lv_target_type.
 
           WHEN 'data_element'.
-            DATA(lo_de_set) = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            DATA(lo_de_set) = xco_cp_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            IF lv_use_cp = abap_false.
+              lo_de_set = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            ENDIF.
             DATA lt_dtel_texts TYPE sxco_t_dtel_texts.
             DATA lo_de_ta_w TYPE REF TO cl_xco_dtel_text_attribute.
             DO lines( lt_attrs ) TIMES.
@@ -409,10 +473,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             ).
 
           WHEN 'domain'.
-            DATA(lo_dom_set) = xco_i18n=>target->domain->fixed_value(
+            DATA(lo_dom_set) = xco_cp_i18n=>target->domain->fixed_value(
               iv_domain_name = CONV sxco_ad_object_name( lv_object_name )
               iv_lower_limit = CONV if_xco_domain_fixed_value=>tv_lower_limit( lv_fixed_value )
             ).
+            IF lv_use_cp = abap_false.
+              lo_dom_set = xco_i18n=>target->domain->fixed_value(
+                iv_domain_name = CONV sxco_ad_object_name( lv_object_name )
+                iv_lower_limit = CONV if_xco_domain_fixed_value=>tv_lower_limit( lv_fixed_value )
+              ).
+            ENDIF.
             DATA lt_dom_texts TYPE sxco_t_domain_texts.
             DATA(lo_dom_ta_w) = xco_cp_domain=>text_attribute->fixed_value_description.
             DO lines( lt_attrs ) TIMES.
@@ -434,10 +504,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               RETURN.
             ENDIF.
             TRANSLATE lv_field_name TO LOWER CASE.
-            DATA(lo_ddls_set) = xco_i18n=>target->data_definition->field(
+            DATA(lo_ddls_set) = xco_cp_i18n=>target->data_definition->field(
               iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
               iv_field_name  = CONV sxco_cds_field_name( lv_field_name )
             ).
+            IF lv_use_cp = abap_false.
+              lo_ddls_set = xco_i18n=>target->data_definition->field(
+                iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
+                iv_field_name  = CONV sxco_cds_field_name( lv_field_name )
+              ).
+            ENDIF.
             DATA lt_ddls_texts TYPE sxco_t_ddef_fld_texts.
             DATA lo_fld_ta_w TYPE REF TO cl_xco_ddef_fld_text_attribute.
             DO lines( lt_attrs ) TIMES.
@@ -463,10 +539,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             ).
 
           WHEN 'message_class'.
-            DATA(lo_mc_set) = xco_i18n=>target->message_class->message(
+            DATA(lo_mc_set) = xco_cp_i18n=>target->message_class->message(
               iv_message_class_name = CONV sxco_mc_object_name( lv_object_name )
               iv_message_number     = CONV if_xco_mc_message=>tv_number( lv_msg_number )
             ).
+            IF lv_use_cp = abap_false.
+              lo_mc_set = xco_i18n=>target->message_class->message(
+                iv_message_class_name = CONV sxco_mc_object_name( lv_object_name )
+                iv_message_number     = CONV if_xco_mc_message=>tv_number( lv_msg_number )
+              ).
+            ENDIF.
             DATA lt_mc_texts TYPE sxco_t_mc_texts.
             DATA(lo_mc_ta_w) = xco_cp_message_class=>text_attribute->message_short_text.
             DO lines( lt_attrs ) TIMES.
@@ -489,20 +571,32 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               APPEND lo_tp_ta_w->create_text( io_value = lo_tp_tv ) TO lt_tp_texts.
             ENDDO.
             IF lv_pool_type = 'class' OR lv_pool_type IS INITIAL.
-              DATA(lo_cls_set) = xco_i18n=>target->text_pool->class_text_symbol(
+              DATA(lo_cls_set) = xco_cp_i18n=>target->text_pool->class_text_symbol(
                 iv_class_name     = CONV sxco_ao_object_name( lv_object_name )
                 iv_text_symbol_id = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
+              IF lv_use_cp = abap_false.
+                lo_cls_set = xco_i18n=>target->text_pool->class_text_symbol(
+                  iv_class_name     = CONV sxco_ao_object_name( lv_object_name )
+                  iv_text_symbol_id = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
+                ).
+              ENDIF.
               lo_cls_set->set_translation(
                 it_texts           = lt_tp_texts
                 io_language        = lo_language
                 io_change_scenario = lo_change_scenario
               ).
             ELSE.
-              DATA(lo_fg_set) = xco_i18n=>target->text_pool->function_group_text_symbol(
+              DATA(lo_fg_set) = xco_cp_i18n=>target->text_pool->function_group_text_symbol(
                 iv_function_group_name = CONV sxco_fg_object_name( lv_object_name )
                 iv_text_symbol_id      = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
               ).
+              IF lv_use_cp = abap_false.
+                lo_fg_set = xco_i18n=>target->text_pool->function_group_text_symbol(
+                  iv_function_group_name = CONV sxco_fg_object_name( lv_object_name )
+                  iv_text_symbol_id      = CONV if_xco_i18n_tp_target_factory=>tv_text_symbol_id( lv_text_sym_id )
+                ).
+              ENDIF.
               lo_fg_set->set_translation(
                 it_texts           = lt_tp_texts
                 io_language        = lo_language
@@ -517,10 +611,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 iv_message = 'field_name is required for metadata_extension set_translation' ).
               RETURN.
             ENDIF.
-            DATA(lo_me_set) = xco_i18n=>target->metadata_extension->field(
+            DATA(lo_me_set) = xco_cp_i18n=>target->metadata_extension->field(
               iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
               iv_field_name              = CONV sxco_cds_field_name( lv_field_name )
             ).
+            IF lv_use_cp = abap_false.
+              lo_me_set = xco_i18n=>target->metadata_extension->field(
+                iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
+                iv_field_name              = CONV sxco_cds_field_name( lv_field_name )
+              ).
+            ENDIF.
             DATA lt_me_texts TYPE sxco_t_me_fld_texts.
             DATA lo_me_ta_w TYPE REF TO cl_xco_me_fld_text_attribute.
             DO lines( lt_attrs ) TIMES.
@@ -616,6 +716,8 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     TRANSLATE lv_source_lang TO UPPER CASE.
     TRANSLATE lv_target_lang TO UPPER CASE.
 
+    DATA(lv_use_cp) = should_use_cp( iv_target_type = lv_target_type iv_object_name = lv_object_name ).
+
     FIND PCRE '"fields"\s*:\s*\[([^\]]*)\]' IN is_message-params SUBMATCHES DATA(lv_fields_str).
     IF sy-subrc = 0 AND lv_fields_str IS NOT INITIAL.
       lt_fields = parse_string_array( lv_fields_str ).
@@ -644,10 +746,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               DATA(lv_fld_lower) = lv_field.
               TRANSLATE lv_fld_lower TO LOWER CASE.
 
-              DATA(lo_cmp_fld) = xco_i18n=>target->data_definition->field(
+              DATA(lo_cmp_fld) = xco_cp_i18n=>target->data_definition->field(
                 iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
                 iv_field_name  = CONV sxco_cds_field_name( lv_fld_lower )
               ).
+              IF lv_use_cp = abap_false.
+                lo_cmp_fld = xco_i18n=>target->data_definition->field(
+                  iv_entity_name = CONV sxco_cds_object_name( lv_object_name )
+                  iv_field_name  = CONV sxco_cds_field_name( lv_fld_lower )
+                ).
+              ENDIF.
               DATA(lo_cmp_src_t) = lo_cmp_fld->get_translation(
                 io_language        = lo_src_lang
                 it_text_attributes = lt_cmp_fld_ta
@@ -680,7 +788,10 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             ENDLOOP.
 
           WHEN 'data_element'.
-            DATA(lo_cmp_de) = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            DATA(lo_cmp_de) = xco_cp_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            IF lv_use_cp = abap_false.
+              lo_cmp_de = xco_i18n=>target->data_element->object( CONV sxco_ad_object_name( lv_object_name ) ).
+            ENDIF.
 
             DATA lt_cmp_de_attr_names TYPE string_table.
             APPEND 'short_field_label'    TO lt_cmp_de_attr_names.
@@ -754,10 +865,16 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
               DATA(lv_me_tgt_json) = ||.
               DATA(lv_me_any_diff) = abap_false.
 
-              DATA(lo_cmp_me) = xco_i18n=>target->metadata_extension->field(
+              DATA(lo_cmp_me) = xco_cp_i18n=>target->metadata_extension->field(
                 iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
                 iv_field_name              = CONV sxco_cds_field_name( lv_me_field )
               ).
+              IF lv_use_cp = abap_false.
+                lo_cmp_me = xco_i18n=>target->metadata_extension->field(
+                  iv_metadata_extension_name = CONV sxco_cds_object_name( lv_object_name )
+                  iv_field_name              = CONV sxco_cds_field_name( lv_me_field )
+                ).
+              ENDIF.
 
               LOOP AT lt_cmp_me_attr_names INTO DATA(lv_cmp_me_attr).
                 lo_cmp_me_ta = get_me_field_attr( lv_cmp_me_attr ).
@@ -821,6 +938,52 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
 
+  METHOD detect_system.
+    IF gv_detected = abap_true.
+      RETURN.
+    ENDIF.
+    TRY.
+        cl_abap_typedescr=>describe_by_name( 'XCO_I18N' ).
+        gv_on_premise = abap_true.
+      CATCH cx_sy_rtti_syntax_error.
+        gv_on_premise = abap_false.
+    ENDTRY.
+    gv_detected = abap_true.
+  ENDMETHOD.
+
+  METHOD should_use_cp.
+    detect_system( ).
+    IF gv_on_premise = abap_false.
+      rv_use_cp = abap_true.
+      RETURN.
+    ENDIF.
+    " On on-premise: check if object is visible to CP APIs (Cloud SWC)
+    TRY.
+        CASE iv_target_type.
+          WHEN 'data_element'.
+            rv_use_cp = xco_cp_abap_repository=>object->dtel->for( CONV #( iv_object_name ) )->exists( ).
+          WHEN 'domain'.
+            rv_use_cp = xco_cp_abap_repository=>object->doma->for( CONV #( iv_object_name ) )->exists( ).
+          WHEN 'data_definition'.
+            rv_use_cp = xco_cp_abap_repository=>object->ddls->for( CONV #( iv_object_name ) )->exists( ).
+          WHEN 'metadata_extension'.
+            rv_use_cp = xco_cp_abap_repository=>object->ddlx->for( CONV #( iv_object_name ) )->exists( ).
+          WHEN 'message_class'.
+            rv_use_cp = xco_cp_abap_repository=>object->msag->for( CONV #( iv_object_name ) )->exists( ).
+          WHEN 'text_pool'.
+            IF iv_pool_type = 'function_group'.
+              rv_use_cp = xco_cp_abap_repository=>object->fugr->for( CONV #( iv_object_name ) )->exists( ).
+            ELSE.
+              rv_use_cp = xco_cp_abap_repository=>object->clas->for( CONV #( iv_object_name ) )->exists( ).
+            ENDIF.
+          WHEN OTHERS.
+            rv_use_cp = abap_true.
+        ENDCASE.
+      CATCH cx_root.
+        rv_use_cp = abap_false.
+    ENDTRY.
+  ENDMETHOD.
+
   METHOD parse_string_array.
     FIND ALL OCCURRENCES OF PCRE '"([^"]*)"' IN iv_content RESULTS DATA(lt_matches).
     LOOP AT lt_matches INTO DATA(ls_match).
@@ -854,25 +1017,24 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     ENDCASE.
   ENDMETHOD.
 
-
   METHOD get_me_field_attr.
     CASE iv_name.
       WHEN 'endusertext_label'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->endusertext_label.
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->endusertext_label.
       WHEN 'endusertext_quickinfo'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->endusertext_quickinfo.
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->endusertext_quickinfo.
       WHEN 'ui_lineitem_label'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->ui_lineitem_label( 1 ).
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->ui_lineitem_label( 1 ).
       WHEN 'ui_identification_label'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->ui_identification_label( 1 ).
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->ui_identification_label( 1 ).
       WHEN 'ui_fieldgroup_label'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->ui_fieldgroup_label( 1 ).
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->ui_fieldgroup_label( 1 ).
       WHEN 'ui_facet_label'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->ui_facet_label( 1 ).
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->ui_facet_label( 1 ).
       WHEN 'ui_fieldgroup_grouplabel'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->ui_fieldgroup_grouplabel( 1 ).
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->ui_fieldgroup_grouplabel( 1 ).
       WHEN 'consumption_valuehelpdef_label'.
-        ro_attr = xco_metadata_extension=>text_attribute->field->consumption_valuehelpdef_label( 1 ).
+        ro_attr = xco_cp_metadata_extension=>text_attribute->field->consumption_valuehelpdef_label( 1 ).
     ENDCASE.
   ENDMETHOD.
 
