@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.39.0] - 2026-04-12
+### Features
+
+- **i18n:** Dual XCO API strategy - xco_cp_i18n primary with xco_i18n fallback ([`39765f6`](https://github.com/oisee/vibing-steampunk/commit/39765f6c1a4642d5a173b346b0878c328d713dc3))
+
+
+
+## [2.38.5] - 2026-04-12
+### Bug Fixes
+
+- Use xco_i18n instead of xco_cp_i18n for custom Z* object support ([`7aa5c99`](https://github.com/oisee/vibing-steampunk/commit/7aa5c9966454fb6745f25dee4e73edd47d88d97a))
+
+
+
 ## [2.38.4] - 2026-04-11
 ### Features
 
