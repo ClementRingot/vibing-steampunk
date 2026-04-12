@@ -30,7 +30,7 @@ func TestExtractDependencies_APCHandler(t *testing.T) {
 		found[d.Name] = d.Kind
 	}
 
-	// Should find these dependencies
+	// Should find these dependencies (services are now discovered dynamically via SEOMETAREL)
 	expect := map[string]DependencyKind{
 		"CL_APC_WSP_EXT_STATEFUL_BASE": KindClass,
 		"IF_APC_WSP_EXTENSION":         KindInterface,
@@ -38,11 +38,6 @@ func TestExtractDependencies_APCHandler(t *testing.T) {
 		"IF_APC_WSP_MESSAGE_MANAGER":   KindInterface,
 		"ZIF_VSP_SERVICE":              KindInterface,
 		"ZCL_VSP_UTILS":                KindClass,
-		"ZCL_VSP_RFC_SERVICE":          KindClass,
-		"ZCL_VSP_DEBUG_SERVICE":        KindClass,
-		"ZCL_VSP_AMDP_SERVICE":         KindClass,
-		"ZCL_VSP_GIT_SERVICE":          KindClass,
-		"ZCL_VSP_REPORT_SERVICE":       KindClass,
 	}
 
 	for name, kind := range expect {
