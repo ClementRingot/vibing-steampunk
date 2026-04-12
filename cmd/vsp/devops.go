@@ -1011,9 +1011,11 @@ func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []st
 	g := graph.New()
 	maxObjects := 50
 	count := 0
+	truncated := false
 
 	for _, obj := range sortedObjs {
 		if count >= maxObjects {
+			truncated = true
 			break
 		}
 		nodeID := graph.NodeID(obj.objType, obj.objName)
@@ -1054,6 +1056,12 @@ func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []st
 
 	// Resolve packages
 	resolvePackagesCLI(ctx, client, g)
+
+	if truncated {
+		fmt.Fprintf(os.Stderr,
+			"  WARN: analysis truncated at %d objects (CR has %d source-bearing objects). Deps for the remaining %d are not counted — boundary totals are lower bounds, not complete.\n",
+			maxObjects, len(sortedObjs), len(sortedObjs)-maxObjects)
+	}
 
 	return graph.AnalyzeTransportBoundaries(g, scope), nil
 }

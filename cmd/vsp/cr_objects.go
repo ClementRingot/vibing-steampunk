@@ -64,7 +64,30 @@ func collectCRDevObjects(ctx context.Context, client *adt.Client, trList []strin
 	var unknownLIMU int
 
 	// Cache FUGR lookup results so we only query TFDIR once per FM name.
+	// Pre-populate the whole cache in one batched pass across the entire
+	// input row set, so resolveLIMUParent can route LIMU FUNC → FUGR
+	// without an N+1 per-row TFDIR round-trip.
 	fmToFugr := make(map[string]string)
+	var fmNames []string
+	fmSeen := make(map[string]bool)
+	for _, row := range rows {
+		if strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["PGMID"]))) != "LIMU" {
+			continue
+		}
+		if strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"]))) != "FUNC" {
+			continue
+		}
+		nm := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])))
+		if nm != "" && !fmSeen[nm] {
+			fmSeen[nm] = true
+			fmNames = append(fmNames, nm)
+		}
+	}
+	if len(fmNames) > 0 {
+		if err := batchFMToFugr(ctx, client, fmNames, fmToFugr); err != nil {
+			fmt.Fprintf(os.Stderr, "  (TFDIR batch for %d FMs failed: %v — falling back to per-row lookup)\n", len(fmNames), err)
+		}
+	}
 
 	for _, row := range rows {
 		pgmid := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["PGMID"])))
@@ -113,12 +136,12 @@ func collectCRDevObjects(ctx context.Context, client *adt.Client, trList []strin
 	}
 
 	// TADIR filter: keep only parents that actually exist and are not deleted.
-	// Collect names, batch-query TADIR, then split live vs deleted.
-	names := make([]string, 0, len(parents))
+	// Collect (type, name) pairs, batch-query TADIR, then split live vs deleted.
+	tKeys := make([]tadirKey, 0, len(parents))
 	for k := range parents {
-		names = append(names, k.objName)
+		tKeys = append(tKeys, tadirKey{k.objType, k.objName})
 	}
-	alive, err := lookupTADIRAlive(ctx, client, names)
+	alive, err := lookupTADIRAlive(ctx, client, tKeys)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -126,7 +149,20 @@ func collectCRDevObjects(ctx context.Context, client *adt.Client, trList []strin
 	var live []CRDevObject
 	var deleted []CRDeletedRef
 	for key, p := range parents {
-		tadirRow, found := alive[key.objName]
+		tKey := tadirKey{key.objType, key.objName}
+		tadirRow, found := alive[tKey]
+		// Fallback: some older systems report an object under a slightly
+		// different type (CLAS/INTF interchangeability). Try by name only
+		// if the strict (type, name) lookup missed.
+		if !found {
+			for k, v := range alive {
+				if k.objName == key.objName && v.matches(key.objType) {
+					tadirRow = v
+					found = true
+					break
+				}
+			}
+		}
 		if !found || tadirRow.deleted || !tadirRow.matches(key.objType) {
 			src := "R3TR"
 			if len(p.LIMUKinds) > 0 {
@@ -203,6 +239,46 @@ func resolveLIMUParent(object, objName string, client *adt.Client, ctx context.C
 	return "", ""
 }
 
+// batchFMToFugr pre-populates fmToFugr by querying TFDIR for up to `batchSize`
+// function-module names per round-trip instead of one per name. This drops
+// LIMU FUNC resolution for a CR with ~50 transported FMs from 50 sequential
+// TFDIR round-trips to ~10 batched ones.
+func batchFMToFugr(ctx context.Context, client *adt.Client, names []string, cache map[string]string) error {
+	const batchSize = 5
+	for i := 0; i < len(names); i += batchSize {
+		end := i + batchSize
+		if end > len(names) {
+			end = len(names)
+		}
+		batch := names[i:end]
+		quoted := make([]string, len(batch))
+		for j, n := range batch {
+			quoted[j] = "'" + strings.ToUpper(n) + "'"
+		}
+		q := fmt.Sprintf("SELECT FUNCNAME, PNAME FROM TFDIR WHERE FUNCNAME IN (%s)", strings.Join(quoted, ","))
+		res, err := client.RunQuery(ctx, q, 100)
+		if err != nil {
+			return err
+		}
+		if res == nil {
+			continue
+		}
+		for _, row := range res.Rows {
+			fn := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["FUNCNAME"])))
+			pn := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["PNAME"])))
+			cache[fn] = strings.TrimPrefix(pn, "SAPL")
+		}
+	}
+	// Record a negative hit for anything TFDIR did not answer, so the per-row
+	// fallback doesn't loop back and re-query the same missing name.
+	for _, n := range names {
+		if _, ok := cache[strings.ToUpper(n)]; !ok {
+			cache[strings.ToUpper(n)] = ""
+		}
+	}
+	return nil
+}
+
 // queryFMToFugr returns the parent function group for a function module name
 // by looking at TFDIR.PNAME (format: "SAPL<group>"). Returns empty if unknown.
 func queryFMToFugr(ctx context.Context, client *adt.Client, fmName string) string {
@@ -237,32 +313,44 @@ func (r tadirRow) matches(wantType string) bool {
 	return false
 }
 
-// lookupTADIRAlive returns a map name→tadirRow for every unique name we want
-// to confirm as live. Deleted entries (DELFLAG='X') are marked with deleted=true
-// so the caller can report them explicitly rather than silently dropping them.
+// tadirKey is the composite TADIR lookup key. Keying by name alone would
+// collapse cases where the same name exists under multiple object types
+// (e.g. a class and an interface with the same identifier) and could route
+// a deleted row to the wrong parent. Keying by (type, name) keeps the
+// mapping unambiguous.
+type tadirKey struct{ objType, objName string }
+
+// lookupTADIRAlive returns a map (type,name)→tadirRow for every unique
+// object we want to confirm as live. Deleted entries (DELFLAG='X') are
+// marked with deleted=true so the caller can report them explicitly.
 // Missing entries simply do not appear in the map.
-func lookupTADIRAlive(ctx context.Context, client *adt.Client, names []string) (map[string]tadirRow, error) {
-	out := make(map[string]tadirRow)
-	if len(names) == 0 {
+func lookupTADIRAlive(ctx context.Context, client *adt.Client, keys []tadirKey) (map[tadirKey]tadirRow, error) {
+	out := make(map[tadirKey]tadirRow)
+	if len(keys) == 0 {
 		return out, nil
 	}
-	// Dedup before batching.
-	seen := make(map[string]bool, len(names))
-	uniq := make([]string, 0, len(names))
-	for _, n := range names {
-		u := strings.ToUpper(n)
+	// Dedup, and collect the unique list of names — TADIR lookups batch by
+	// name (OBJ_NAME IN (...)) while the result routing keys on (type, name).
+	seen := make(map[tadirKey]bool, len(keys))
+	nameSet := make(map[string]bool, len(keys))
+	var uniqNames []string
+	for _, k := range keys {
+		u := tadirKey{strings.ToUpper(k.objType), strings.ToUpper(k.objName)}
 		if !seen[u] {
 			seen[u] = true
-			uniq = append(uniq, u)
+		}
+		if !nameSet[u.objName] {
+			nameSet[u.objName] = true
+			uniqNames = append(uniqNames, u.objName)
 		}
 	}
 	const batchSize = 5
-	for i := 0; i < len(uniq); i += batchSize {
+	for i := 0; i < len(uniqNames); i += batchSize {
 		end := i + batchSize
-		if end > len(uniq) {
-			end = len(uniq)
+		if end > len(uniqNames) {
+			end = len(uniqNames)
 		}
-		batch := uniq[i:end]
+		batch := uniqNames[i:end]
 		quoted := make([]string, len(batch))
 		for j, n := range batch {
 			quoted[j] = "'" + n + "'"
@@ -282,14 +370,13 @@ func lookupTADIRAlive(ctx context.Context, client *adt.Client, names []string) (
 			objType := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"])))
 			devclass := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DEVCLASS"])))
 			delflag := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DELFLAG"])))
-			// When a name has multiple TADIR rows (same name under different
-			// object types, rare but possible), keep the first live one we
-			// encounter — the caller's wantType match will sort it out.
-			existing, have := out[name]
+			k := tadirKey{objType, name}
+			// Prefer live entries if the same (type, name) has multiple rows.
+			existing, have := out[k]
 			if have && !existing.deleted {
 				continue
 			}
-			out[name] = tadirRow{
+			out[k] = tadirRow{
 				objType:  objType,
 				devclass: devclass,
 				deleted:  delflag == "X",
