@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -336,42 +337,63 @@ func collectCodeTables(ctx context.Context, client *adt.Client, wbTRs []string, 
 		return objList[i].objName < objList[j].objName
 	})
 
-	// Step 2: batch symbol-ref queries. Instead of one WBCROSSGT/CROSS
-	// round-trip per object, pack up to 5 objects per query via OR-LIKE
-	// and route each result row back to its originating object by longest
-	// name-prefix match. This is the hot path — on a real S/4HANA CR
-	// with ~200 scope objects it turns ~40-60s into under 10s.
+	// Step 2: per-object symbol-ref queries run in parallel via a small
+	// worker pool. An earlier attempt to batch 5 objects per query using
+	// OR-LIKE failed on live d15 — SAP's freestyle query parser rejects
+	// more than one LIKE per WHERE clause ("LIKE is not allowed here"),
+	// so any OR-ed pattern list fell back to zero rows and silently
+	// dropped every code-side table. Parallelism via goroutines gives the
+	// same ~5x wall-clock win without tripping that parser limitation.
 	type dedupKey struct{ symbol, include string }
 	seen := map[dedupKey]bool{}
+	var seenMu sync.Mutex
 
 	rawRefs := make(map[string][]graph.TableCodeRef)
+	var rawMu sync.Mutex
 	prog := newProgress(total, 2)
-	const batchSize = 5
-	for i := 0; i < len(objList); i += batchSize {
-		end := i + batchSize
-		if end > len(objList) {
-			end = len(objList)
-		}
-		batch := objList[i:end]
-		label := batch[0].objName
-		if len(batch) > 1 {
-			label = fmt.Sprintf("%s … +%d", batch[0].objName, len(batch)-1)
-		}
-		prog.tick(i, label)
 
-		refs := queryCodeRefsForBatch(ctx, client, batch)
-		for _, r := range refs {
-			if !plausibleTableName(r.Table) {
-				continue
+	const refWorkers = 6
+	jobCh := make(chan devObj)
+	var wg sync.WaitGroup
+	for w := 0; w < refWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for obj := range jobCh {
+				fromObject := obj.objType + ":" + obj.objName
+				refs := queryCodeRefsForObject(ctx, client, obj.objName, obj.objType)
+				for _, r := range refs {
+					if !plausibleTableName(r.Table) {
+						continue
+					}
+					key := dedupKey{r.Table, r.FromInclude}
+					seenMu.Lock()
+					if seen[key] {
+						seenMu.Unlock()
+						continue
+					}
+					seen[key] = true
+					seenMu.Unlock()
+					r.FromObject = fromObject
+					rawMu.Lock()
+					rawRefs[r.Table] = append(rawRefs[r.Table], r)
+					rawMu.Unlock()
+				}
 			}
-			key := dedupKey{r.Table, r.FromInclude}
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			rawRefs[r.Table] = append(rawRefs[r.Table], r)
-		}
+		}()
 	}
+
+	// Dispatcher: feed objects to the worker pool, tick progress every
+	// few items. Close the channel when we've handed out everything so
+	// the workers drain and exit cleanly.
+	go func() {
+		for i, obj := range objList {
+			prog.tick(i, obj.objName)
+			jobCh <- obj
+		}
+		close(jobCh)
+	}()
+	wg.Wait()
 	prog.done(len(objList))
 	fmt.Fprintf(os.Stderr, "Collected %d unique symbols from cross-refs; filtering via DD02L...\n", len(rawRefs))
 
@@ -1228,79 +1250,42 @@ func (p *progress) done(current int) {
 }
 
 // devObj is the per-file canonical (type, name) pair used by
-// collectCodeTables and queryCodeRefsForBatch. Promoted to file scope so
-// both functions can share it.
+// collectCodeTables and queryCodeRefsForObject. Promoted to file scope so
+// the worker pool in collectCodeTables can share the type with its helper.
 type devObj struct {
 	objType string
 	objName string
 }
 
-// queryCodeRefsForBatch pulls WBCROSSGT and CROSS symbol references for up
-// to 5 objects in a single round-trip each, via INCLUDE LIKE 'A%' OR INCLUDE
-// LIKE 'B%' OR ... The prefixes are the object names (and for FUGR also the
-// `L<NAME>%` shape that covers sub-includes like LZFOO_U01). Each returned
-// row is routed back to its owning object by longest name-prefix match on
-// the INCLUDE column, so FromObject is always set correctly even when two
-// names in the batch share a prefix.
+// queryCodeRefsForObject pulls symbol references from WBCROSSGT (OO code)
+// and CROSS (procedural code) for a single in-scope dev object. One
+// object per call — SAP's freestyle query parser rejects multi-LIKE
+// WHERE clauses ("LIKE is not allowed here"), so batching at the query
+// level is impossible; we parallelise at the caller instead, see the
+// worker pool in collectCodeTables.
 //
-// Batching keeps us under the SAP freestyle 255-char literal limit — with
-// 5 LIKE patterns the longest query we build is about 220 characters.
-func queryCodeRefsForBatch(ctx context.Context, client *adt.Client, batch []devObj) []graph.TableCodeRef {
-	if len(batch) == 0 {
-		return nil
-	}
+// Returns every reference regardless of whether the target is actually
+// a table — DD02L cross-check happens at the caller. Names with
+// `\component` suffix are stripped to the base symbol.
+func queryCodeRefsForObject(ctx context.Context, client *adt.Client, name, objType string) []graph.TableCodeRef {
 	var out []graph.TableCodeRef
+	nameUp := strings.ToUpper(name)
 
-	// Build the prefix → owning object map once. For FUGR we register two
-	// shapes — `ZFOO%` for the header and `LZFOO%` for sub-includes — so a
-	// row whose INCLUDE starts with `LZFOO_U01` still routes back to FUGR ZFOO.
-	type prefixOwner struct {
-		prefix string
-		owner  devObj
-	}
-	prefixes := make([]prefixOwner, 0, len(batch)*2)
-	for _, o := range batch {
-		up := strings.ToUpper(o.objName)
-		prefixes = append(prefixes, prefixOwner{prefix: up, owner: o})
-		if o.objType == "FUGR" {
-			prefixes = append(prefixes, prefixOwner{prefix: "L" + up, owner: o})
-		}
-	}
-	// Longest first so "LZFOO" wins over "ZFOO" when both could match.
-	sort.Slice(prefixes, func(i, j int) bool {
-		return len(prefixes[i].prefix) > len(prefixes[j].prefix)
-	})
-	ownerFor := func(include string) (devObj, bool) {
-		for _, p := range prefixes {
-			if strings.HasPrefix(include, p.prefix) {
-				return p.owner, true
-			}
-		}
-		return devObj{}, false
-	}
-
-	// WBCROSSGT OTYPE='TY' — type references for OO code.
-	wbConds := make([]string, 0, len(prefixes))
-	for _, p := range prefixes {
-		wbConds = append(wbConds, fmt.Sprintf("INCLUDE LIKE '%s%%'", p.prefix))
-	}
-	wbQuery := "SELECT INCLUDE, NAME FROM WBCROSSGT WHERE OTYPE = 'TY' AND (" +
-		strings.Join(wbConds, " OR ") + ")"
+	// WBCROSSGT OTYPE='TY' — type references, which include DDIC tables
+	// alongside classes/interfaces/data elements. Filter out later via DD02L.
+	wbQuery := fmt.Sprintf(
+		"SELECT INCLUDE, NAME FROM WBCROSSGT WHERE OTYPE = 'TY' AND INCLUDE LIKE '%s%%'",
+		nameUp)
 	if wbResult, err := client.RunQuery(ctx, wbQuery, 2000); err == nil && wbResult != nil {
 		for _, row := range wbResult.Rows {
 			inc := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"])))
 			sym := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["NAME"])))
 			sym = stripComponentSuffix(sym)
-			if sym == "" {
-				continue
-			}
-			owner, ok := ownerFor(inc)
-			if !ok || sym == owner.objName {
+			if sym == "" || sym == nameUp {
 				continue
 			}
 			out = append(out, graph.TableCodeRef{
 				Table:       sym,
-				FromObject:  owner.objType + ":" + owner.objName,
 				FromInclude: inc,
 				RefKind:     "WBGT_TY",
 				Source:      "WBCROSSGT",
@@ -1309,29 +1294,32 @@ func queryCodeRefsForBatch(ctx context.Context, client *adt.Client, batch []devO
 	}
 
 	// CROSS.TYPE='S' — structure/table references for classic procedural code.
-	// Reuses the same OR-LIKE batch; the same owner-routing covers FUGR
-	// sub-include prefixes (L<NAME>) thanks to the prefix list above.
-	crossQuery := "SELECT INCLUDE, NAME FROM CROSS WHERE TYPE = 'S' AND (" +
-		strings.Join(wbConds, " OR ") + ")"
-	if crossResult, err := client.RunQuery(ctx, crossQuery, 2000); err == nil && crossResult != nil {
-		for _, row := range crossResult.Rows {
-			inc := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"])))
-			sym := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["NAME"])))
-			sym = stripComponentSuffix(sym)
-			if sym == "" {
-				continue
+	// For FUGR we probe both the name-prefix (ZFG%) and the sub-include
+	// prefix (LZFG%) that covers LZFG_U01, LZFG_TOP, etc. Two separate
+	// queries because SAP freestyle rejects OR-chained LIKE predicates.
+	crossPatterns := []string{nameUp + "%"}
+	if objType == "FUGR" {
+		crossPatterns = append(crossPatterns, "L"+nameUp+"%")
+	}
+	for _, pattern := range crossPatterns {
+		crossQuery := fmt.Sprintf(
+			"SELECT INCLUDE, NAME FROM CROSS WHERE TYPE = 'S' AND INCLUDE LIKE '%s'",
+			pattern)
+		if crossResult, err := client.RunQuery(ctx, crossQuery, 2000); err == nil && crossResult != nil {
+			for _, row := range crossResult.Rows {
+				inc := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"])))
+				sym := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["NAME"])))
+				sym = stripComponentSuffix(sym)
+				if sym == "" || sym == nameUp {
+					continue
+				}
+				out = append(out, graph.TableCodeRef{
+					Table:       sym,
+					FromInclude: inc,
+					RefKind:     "CROSS_S",
+					Source:      "CROSS",
+				})
 			}
-			owner, ok := ownerFor(inc)
-			if !ok || sym == owner.objName {
-				continue
-			}
-			out = append(out, graph.TableCodeRef{
-				Table:       sym,
-				FromObject:  owner.objType + ":" + owner.objName,
-				FromInclude: inc,
-				RefKind:     "CROSS_S",
-				Source:      "CROSS",
-			})
 		}
 	}
 	return out
