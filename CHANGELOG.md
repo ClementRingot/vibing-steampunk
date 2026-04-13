@@ -4,10 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.41.0] - 2026-04-13
+### Bug Fixes
+
+- **install:** Set Description and check result.Success in InstallZADTVSP ([`0b8846d`](https://github.com/oisee/vibing-steampunk/commit/0b8846dc414e4e7b1019e546a4d25307099ebbee))
+
+
+
 ## [2.40.0] - 2026-04-13
 ### Bug Fixes
 
-- **install:** Fix InstallZADTVSP silently failing - missing Description in WriteSourceOptions caused writeSourceCreate to return early without error, and result.Success was not checked
 - **test:** Use expert mode and schema-level validation for i18n tests ([`909d486`](https://github.com/oisee/vibing-steampunk/commit/909d4861e274d6ef933f9c513f01c3b6af4bd868))
 - **test:** Restore context import needed by getRegisteredTools ([`8916a8f`](https://github.com/oisee/vibing-steampunk/commit/8916a8fcbda4d59f52d8e397c859b795021b1e59))
 
