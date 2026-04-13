@@ -28,11 +28,13 @@ func (s *Server) routeI18nAction(ctx context.Context, action, objectType, object
 		return s.callHandler(ctx, s.handleListLanguages, params)
 	case "COMPARE_TRANSLATIONS":
 		return s.callHandler(ctx, s.handleCompareTranslationsXCO, params)
+	case "LIST_TEXTS":
+		return s.callHandler(ctx, s.handleListTranslatableTextsXCO, params)
 	}
 	return nil, false, nil
 }
 
-// handleGetTranslationXCO reads translated texts for any ABAP object via XCO_CP_I18N.
+// handleGetTranslationXCO reads translated texts for any ABAP object via XCO I18N.
 func (s *Server) handleGetTranslationXCO(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if errResult := s.ensureWSConnected(ctx, "GetTranslationXCO"); errResult != nil {
 		return errResult, nil
@@ -74,6 +76,12 @@ func (s *Server) handleGetTranslationXCO(ctx context.Context, request mcp.CallTo
 	if v, ok := request.GetArguments()["text_pool_owner_type"].(string); ok && v != "" {
 		params.TextPoolOwnerType = v
 	}
+	if v, ok := request.GetArguments()["subobject_name"].(string); ok && v != "" {
+		params.SubobjectName = v
+	}
+	if v, ok := request.GetArguments()["position"].(string); ok && v != "" {
+		params.Position = v
+	}
 
 	result, err := s.amdpWSClient.GetTranslationViaXCO(ctx, params)
 	if err != nil {
@@ -87,7 +95,7 @@ func (s *Server) handleGetTranslationXCO(ctx context.Context, request mcp.CallTo
 	return mcp.NewToolResultText(string(jsonBytes)), nil
 }
 
-// handleSetTranslationXCO writes translated texts for an ABAP object via XCO_CP_I18N.
+// handleSetTranslationXCO writes translated texts for an ABAP object via XCO I18N.
 func (s *Server) handleSetTranslationXCO(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if errResult := s.ensureWSConnected(ctx, "SetTranslationXCO"); errResult != nil {
 		return errResult, nil
@@ -149,6 +157,12 @@ func (s *Server) handleSetTranslationXCO(ctx context.Context, request mcp.CallTo
 	}
 	if v, ok := request.GetArguments()["text_pool_owner_type"].(string); ok && v != "" {
 		params.TextPoolOwnerType = v
+	}
+	if v, ok := request.GetArguments()["subobject_name"].(string); ok && v != "" {
+		params.SubobjectName = v
+	}
+	if v, ok := request.GetArguments()["position"].(string); ok && v != "" {
+		params.Position = v
 	}
 
 	if err := s.amdpWSClient.SetTranslationViaXCO(ctx, params); err != nil {
@@ -230,6 +244,9 @@ func (s *Server) handleCompareTranslationsXCO(ctx context.Context, request mcp.C
 			}
 		}
 	}
+	if v, ok := request.GetArguments()["position"].(string); ok && v != "" {
+		params.Position = v
+	}
 
 	result, err := s.amdpWSClient.CompareTranslationsViaXCO(ctx, params)
 	if err != nil {
@@ -241,4 +258,44 @@ func (s *Server) handleCompareTranslationsXCO(ctx context.Context, request mcp.C
 		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
 	}
 	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+// handleListTranslatableTextsXCO lists all translatable texts for an ABAP object.
+func (s *Server) handleListTranslatableTextsXCO(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+if errResult := s.ensureWSConnected(ctx, "ListTranslatableTextsXCO"); errResult != nil {
+return errResult, nil
+}
+
+targetType, ok := request.GetArguments()["target_type"].(string)
+if !ok || targetType == "" {
+return newToolResultError("target_type is required"), nil
+}
+
+objectName, ok := request.GetArguments()["object_name"].(string)
+if !ok || objectName == "" {
+return newToolResultError("object_name is required"), nil
+}
+
+params := adt.I18NListTextsParams{
+TargetType: targetType,
+ObjectName: strings.ToUpper(objectName),
+}
+
+if v, ok := request.GetArguments()["language"].(string); ok && v != "" {
+params.Language = strings.ToUpper(v)
+}
+if v, ok := request.GetArguments()["text_pool_owner_type"].(string); ok && v != "" {
+params.TextPoolOwnerType = v
+}
+
+result, err := s.amdpWSClient.ListTranslatableTextsViaXCO(ctx, params)
+if err != nil {
+return newToolResultError(fmt.Sprintf("ListTranslatableTextsXCO failed: %v", err)), nil
+}
+
+jsonBytes, err := json.MarshalIndent(result, "", "  ")
+if err != nil {
+return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
+}
+return mcp.NewToolResultText(string(jsonBytes)), nil
 }

@@ -161,7 +161,8 @@ func focusedToolSet() map[string]bool {
 		"CompareLanguages":         true, // Compare object texts between two languages
 
 		// XCO i18n tools — full coverage incl. DDLS/DDLX (require ZADT_VSP i18n service)
-		"GetTranslationXCO": true, // Read translations via XCO: data_element, domain, DDLS, DDLX, ...
-		"ListLanguages":     true, // List all SAP languages installed in the system
+		"GetTranslationXCO":          true, // Read translations via XCO: data_element, domain, DDLS, DDLX, ...
+		"ListLanguages":              true, // List all SAP languages installed in the system
+		"ListTranslatableTextsXCO":   true, // List all translatable texts for an object
 	}
 }
