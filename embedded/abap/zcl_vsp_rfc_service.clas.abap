@@ -568,7 +568,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
     IF sy-subrc = 0.
       DATA lv_rest TYPE string.
       lv_rest = iv_params+lv_pos.
-      FIND REGEX ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      FIND PCRE ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
     ENDIF.
   ENDMETHOD.
 

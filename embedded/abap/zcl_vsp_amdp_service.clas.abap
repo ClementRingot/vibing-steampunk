@@ -846,11 +846,11 @@ CLASS zcl_vsp_amdp_service IMPLEMENTATION.
     DATA lv_pattern TYPE string.
     lv_pattern = |"{ iv_name }"\\s*:\\s*"([^"]*)"|.
 
-    FIND REGEX lv_pattern IN iv_params SUBMATCHES rv_value.
+    FIND PCRE lv_pattern IN iv_params SUBMATCHES rv_value.
     IF sy-subrc <> 0.
       " Try numeric value
       lv_pattern = |"{ iv_name }"\\s*:\\s*(\\d+)|.
-      FIND REGEX lv_pattern IN iv_params SUBMATCHES rv_value.
+      FIND PCRE lv_pattern IN iv_params SUBMATCHES rv_value.
     ENDIF.
   ENDMETHOD.
 
