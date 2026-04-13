@@ -352,6 +352,24 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		skipGitService = true
 	}
 
+	// Check for ABAP Platform 2022+ (for I18N service - requires XCO APIs, available from release 756+)
+	skipI18nService := false
+	sysInfo, err := s.adtClient.GetSystemInfo(ctx)
+	if err == nil && sysInfo.SAPRelease != "" {
+		// SAP_BASIS release: 756 = ABAP Platform 2022, 757 = 2023, etc.
+		releaseNum := 0
+		fmt.Sscanf(sysInfo.SAPRelease, "%d", &releaseNum)
+		if releaseNum >= 756 {
+			fmt.Fprintf(&sb, "  ✓ ABAP Platform %s (≥756) → I18N service will be deployed\n", sysInfo.SAPRelease)
+		} else {
+			fmt.Fprintf(&sb, "  ⚠ ABAP Platform %s (<756) → I18N service will be skipped (requires 2022+)\n", sysInfo.SAPRelease)
+			skipI18nService = true
+		}
+	} else {
+		// Can't determine release — try to deploy, let syntax check decide
+		sb.WriteString("  ⚠ Could not determine SAP release → I18N service will be attempted\n")
+	}
+
 	// Check for HANA (for AMDP service)
 	skipAmdpService := false
 	featureProber := adt.NewFeatureProber(s.adtClient, adt.DefaultFeatureConfig(), false)
@@ -387,6 +405,8 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 				fmt.Fprintf(&sb, "  [%d/%d] %s - SKIP (no abapGit)\n", i+1, len(objects), obj.Name)
 			} else if obj.Name == "ZCL_VSP_AMDP_SERVICE" && skipAmdpService {
 				fmt.Fprintf(&sb, "  [%d/%d] %s - SKIP (non-HANA database)\n", i+1, len(objects), obj.Name)
+			} else if obj.Name == "ZCL_VSP_I18N_SERVICE" && skipI18nService {
+				fmt.Fprintf(&sb, "  [%d/%d] %s - SKIP (requires ABAP Platform 2022+)\n", i+1, len(objects), obj.Name)
 			} else {
 				fmt.Fprintf(&sb, "  [%d/%d] %s - %s\n", i+1, len(objects), obj.Name, obj.Description)
 			}
@@ -447,6 +467,13 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 			continue
 		}
 
+		// Skip I18N service if no XCO APIs (pre-2022)
+		if obj.Name == "ZCL_VSP_I18N_SERVICE" && skipI18nService {
+			fmt.Fprintf(&sb, "  [%d/%d] %s ⊘ Skipped (requires ABAP Platform 2022+)\n", i+1, len(objects), obj.Name)
+			skipped = append(skipped, obj.Name)
+			continue
+		}
+
 		fmt.Fprintf(&sb, "  [%d/%d] %s ", i+1, len(objects), obj.Name)
 
 		// Use WriteSource to create/update
@@ -502,6 +529,11 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		sb.WriteString("  ✓ abapGit export (158 object types)\n")
 	} else {
 		sb.WriteString("  ✗ abapGit export (install abapGit first)\n")
+	}
+	if !skipI18nService {
+		sb.WriteString("  ✓ I18N translation (XCO)\n")
+	} else {
+		sb.WriteString("  ✗ I18N translation (requires ABAP Platform 2022+)\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
