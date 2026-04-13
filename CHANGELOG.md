@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.40.0] - 2026-04-13
 ### Bug Fixes
 
+- **install:** Fix InstallZADTVSP silently failing - missing Description in WriteSourceOptions caused writeSourceCreate to return early without error, and result.Success was not checked
 - **test:** Use expert mode and schema-level validation for i18n tests ([`909d486`](https://github.com/oisee/vibing-steampunk/commit/909d4861e274d6ef933f9c513f01c3b6af4bd868))
 - **test:** Restore context import needed by getRegisteredTools ([`8916a8f`](https://github.com/oisee/vibing-steampunk/commit/8916a8fcbda4d59f52d8e397c859b795021b1e59))
 
