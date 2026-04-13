@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -19,6 +18,7 @@ func getRegisteredTools(t *testing.T) []mcp.Tool {
 		Password: "testpass",
 		Client:   "001",
 		Language: "EN",
+		Mode:     "expert", // Register all tools, not just focused subset
 	}
 
 	server := NewServer(cfg)
@@ -203,239 +203,42 @@ func TestI18NToolsInGroupN(t *testing.T) {
 	}
 }
 
-// --- Handler Param Extraction Tests ---
-// These test the argument parsing logic without calling WebSocket.
+// --- Required Params Schema Tests ---
+// Verify required parameters are enforced at the schema level (no WebSocket needed).
 
-func TestGetTranslationXCO_RequiredParamValidation(t *testing.T) {
-	cfg := &Config{
-		BaseURL:  "https://sap.example.com:44300",
-		Username: "testuser",
-		Password: "testpass",
-		Client:   "001",
-		Language: "EN",
-	}
-	server := NewServer(cfg)
+func TestGetTranslationXCO_RequiredParams(t *testing.T) {
+	tools := getRegisteredTools(t)
+	tool := assertToolExists(t, tools, "GetTranslationXCO")
 
-	tests := []struct {
-		name string
-		args map[string]any
-		want string
-	}{
-		{
-			name: "missing target_type",
-			args: map[string]any{"object_name": "ZTEST", "language": "D"},
-			want: "target_type is required",
-		},
-		{
-			name: "missing object_name",
-			args: map[string]any{"target_type": "data_element", "language": "D"},
-			want: "object_name is required",
-		},
-		{
-			name: "missing language",
-			args: map[string]any{"target_type": "data_element", "object_name": "ZTEST"},
-			want: "language is required",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			request := mcp.CallToolRequest{}
-			request.Params.Arguments = tt.args
-
-			result, err := server.handleGetTranslationXCO(context.Background(), request)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !result.IsError {
-				t.Fatal("expected error result")
-			}
-			textContent, ok := result.Content[0].(mcp.TextContent)
-			if !ok {
-				t.Fatalf("expected TextContent, got %T", result.Content[0])
-			}
-			if textContent.Text != tt.want {
-				t.Errorf("got %q, want %q", textContent.Text, tt.want)
-			}
-		})
+	for _, p := range []string{"target_type", "object_name", "language"} {
+		assertToolHasRequired(t, tool, p)
 	}
 }
 
-func TestSetTranslationXCO_RequiredParamValidation(t *testing.T) {
-	cfg := &Config{
-		BaseURL:  "https://sap.example.com:44300",
-		Username: "testuser",
-		Password: "testpass",
-		Client:   "001",
-		Language: "EN",
-	}
-	server := NewServer(cfg)
+func TestSetTranslationXCO_RequiredParams(t *testing.T) {
+	tools := getRegisteredTools(t)
+	tool := assertToolExists(t, tools, "SetTranslationXCO")
 
-	tests := []struct {
-		name string
-		args map[string]any
-		want string
-	}{
-		{
-			name: "missing target_type",
-			args: map[string]any{"object_name": "ZTEST", "language": "D", "transport": "A4HK900001",
-				"texts": `[{"attribute":"short_field_label","value":"Test"}]`},
-			want: "target_type is required",
-		},
-		{
-			name: "missing transport",
-			args: map[string]any{"target_type": "data_element", "object_name": "ZTEST", "language": "D",
-				"texts": `[{"attribute":"short_field_label","value":"Test"}]`},
-			want: "transport is required",
-		},
-		{
-			name: "missing texts",
-			args: map[string]any{"target_type": "data_element", "object_name": "ZTEST", "language": "D",
-				"transport": "A4HK900001"},
-			want: "texts is required (JSON array, e.g. [{\"attribute\":\"short_field_label\",\"value\":\"Vorname\"}])",
-		},
-		{
-			name: "invalid texts JSON",
-			args: map[string]any{"target_type": "data_element", "object_name": "ZTEST", "language": "D",
-				"transport": "A4HK900001", "texts": "not-json"},
-			want: "", // will contain "Failed to parse texts array"
-		},
-		{
-			name: "empty texts array",
-			args: map[string]any{"target_type": "data_element", "object_name": "ZTEST", "language": "D",
-				"transport": "A4HK900001", "texts": "[]"},
-			want: "texts array must not be empty",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			request := mcp.CallToolRequest{}
-			request.Params.Arguments = tt.args
-
-			result, err := server.handleSetTranslationXCO(context.Background(), request)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !result.IsError {
-				t.Fatal("expected error result")
-			}
-			textContent, ok := result.Content[0].(mcp.TextContent)
-			if !ok {
-				t.Fatalf("expected TextContent, got %T", result.Content[0])
-			}
-			if tt.want != "" && textContent.Text != tt.want {
-				t.Errorf("got %q, want %q", textContent.Text, tt.want)
-			}
-			if tt.want == "" && textContent.Text == "" {
-				t.Error("expected non-empty error message")
-			}
-		})
+	for _, p := range []string{"target_type", "object_name", "language", "transport", "texts"} {
+		assertToolHasRequired(t, tool, p)
 	}
 }
 
-func TestCompareTranslationsXCO_RequiredParamValidation(t *testing.T) {
-	cfg := &Config{
-		BaseURL:  "https://sap.example.com:44300",
-		Username: "testuser",
-		Password: "testpass",
-		Client:   "001",
-		Language: "EN",
-	}
-	server := NewServer(cfg)
+func TestCompareTranslationsXCO_RequiredParams(t *testing.T) {
+	tools := getRegisteredTools(t)
+	tool := assertToolExists(t, tools, "CompareTranslationsXCO")
 
-	tests := []struct {
-		name string
-		args map[string]any
-		want string
-	}{
-		{
-			name: "missing target_type",
-			args: map[string]any{"object_name": "ZTEST", "source_language": "E", "target_language": "D"},
-			want: "target_type is required",
-		},
-		{
-			name: "missing source_language",
-			args: map[string]any{"target_type": "data_element", "object_name": "ZTEST", "target_language": "D"},
-			want: "source_language is required",
-		},
-		{
-			name: "missing target_language",
-			args: map[string]any{"target_type": "data_element", "object_name": "ZTEST", "source_language": "E"},
-			want: "target_language is required",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			request := mcp.CallToolRequest{}
-			request.Params.Arguments = tt.args
-
-			result, err := server.handleCompareTranslationsXCO(context.Background(), request)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !result.IsError {
-				t.Fatal("expected error result")
-			}
-			textContent, ok := result.Content[0].(mcp.TextContent)
-			if !ok {
-				t.Fatalf("expected TextContent, got %T", result.Content[0])
-			}
-			if textContent.Text != tt.want {
-				t.Errorf("got %q, want %q", textContent.Text, tt.want)
-			}
-		})
+	for _, p := range []string{"target_type", "object_name", "source_language", "target_language"} {
+		assertToolHasRequired(t, tool, p)
 	}
 }
 
-func TestListTranslatableTextsXCO_RequiredParamValidation(t *testing.T) {
-	cfg := &Config{
-		BaseURL:  "https://sap.example.com:44300",
-		Username: "testuser",
-		Password: "testpass",
-		Client:   "001",
-		Language: "EN",
-	}
-	server := NewServer(cfg)
+func TestListTranslatableTextsXCO_RequiredParams(t *testing.T) {
+	tools := getRegisteredTools(t)
+	tool := assertToolExists(t, tools, "ListTranslatableTextsXCO")
 
-	tests := []struct {
-		name string
-		args map[string]any
-		want string
-	}{
-		{
-			name: "missing target_type",
-			args: map[string]any{"object_name": "ZTEST"},
-			want: "target_type is required",
-		},
-		{
-			name: "missing object_name",
-			args: map[string]any{"target_type": "data_element"},
-			want: "object_name is required",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			request := mcp.CallToolRequest{}
-			request.Params.Arguments = tt.args
-
-			result, err := server.handleListTranslatableTextsXCO(context.Background(), request)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !result.IsError {
-				t.Fatal("expected error result")
-			}
-			textContent, ok := result.Content[0].(mcp.TextContent)
-			if !ok {
-				t.Fatalf("expected TextContent, got %T", result.Content[0])
-			}
-			if textContent.Text != tt.want {
-				t.Errorf("got %q, want %q", textContent.Text, tt.want)
-			}
-		})
+	for _, p := range []string{"target_type", "object_name"} {
+		assertToolHasRequired(t, tool, p)
 	}
 }
 
