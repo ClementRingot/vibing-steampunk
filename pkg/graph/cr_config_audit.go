@@ -340,9 +340,22 @@ func FinalizeCRConfigAuditReport(r *CRConfigAuditReport) {
 	for _, k := range inCRKeys {
 		inCRSet[k] = true
 	}
+	// v1.2b: a DOMA always transports its fixed-value set as one
+	// indivisible R3TR object, so if the CR carries "DOMA:<X>" then
+	// "FIXVAL:<X>" is implicitly covered too. Encode that structural
+	// rule here rather than inflating the CR-side map with phantom
+	// FIXVAL entries (which would dirty MetadataOrphan for every DOMA
+	// without fixed values). Only the reachable side decides whether a
+	// FIXVAL node is interesting at all.
+	coveredByDoma := func(k string) bool {
+		if !strings.HasPrefix(k, "FIXVAL:") {
+			return false
+		}
+		return inCRSet["DOMA:"+strings.TrimPrefix(k, "FIXVAL:")]
+	}
 	for _, k := range reachableKeys {
 		ref := r.MetadataReachable[k]
-		if inCRSet[k] {
+		if inCRSet[k] || coveredByDoma(k) {
 			r.MetadataCovered = append(r.MetadataCovered, ref)
 		} else if !IsStandardObject(ref.Name) {
 			r.MetadataMissing = append(r.MetadataMissing, ref)

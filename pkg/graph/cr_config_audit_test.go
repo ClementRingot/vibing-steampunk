@@ -135,6 +135,46 @@ func TestFinalizeCRConfigAuditReport_MetadataBuckets(t *testing.T) {
 	}
 }
 
+func TestFinalizeCRConfigAuditReport_FixvalCoveredByDoma(t *testing.T) {
+	// v1.2b structural rule: a DOMA always transports its fixed-value
+	// set as one indivisible R3TR object. If the CR carries DOMA:X,
+	// then FIXVAL:X is implicitly covered — even though the CR-side
+	// metadata map only records the DOMA entry.
+	r := &CRConfigAuditReport{
+		CRID: "JIRA-FIXVAL",
+		MetadataReachable: map[string]MetadataRef{
+			// DOMA + FIXVAL both reachable (walker found fixed values in DD07L).
+			"DOMA:ZTEST_DOM_WITH_FV":   {Kind: "DOMA", Name: "ZTEST_DOM_WITH_FV", FromTable: "ZTEST_TAB"},
+			"FIXVAL:ZTEST_DOM_WITH_FV": {Kind: "FIXVAL", Name: "ZTEST_DOM_WITH_FV", FromTable: "ZTEST_TAB"},
+			// A second FIXVAL reachable but its DOMA NOT in the CR — must stay Missing.
+			"FIXVAL:ZTEST_DOM_NOT_IN_CR": {Kind: "FIXVAL", Name: "ZTEST_DOM_NOT_IN_CR", FromTable: "ZTEST_TAB"},
+		},
+		MetadataInCR: map[string]MetadataRef{
+			// Only the DOMA rides in the CR — FIXVAL is implicit.
+			"DOMA:ZTEST_DOM_WITH_FV": {Kind: "DOMA", Name: "ZTEST_DOM_WITH_FV"},
+		},
+	}
+	FinalizeCRConfigAuditReport(r)
+
+	// DOMA + its implicit FIXVAL should both land in Covered.
+	if got, want := r.Summary.MetadataCovered, 2; got != want {
+		t.Errorf("MetadataCovered = %d, want %d (DOMA + implicit FIXVAL)", got, want)
+	}
+	// Only the orphan FIXVAL (no DOMA in CR) should be Missing.
+	if got, want := r.Summary.MetadataMissing, 1; got != want {
+		t.Errorf("MetadataMissing = %d, want %d", got, want)
+	}
+	for _, m := range r.MetadataMissing {
+		if m.Name != "ZTEST_DOM_NOT_IN_CR" {
+			t.Errorf("unexpected missing entry: %+v", m)
+		}
+	}
+	// And no phantom orphan on the inCR side.
+	if got := r.Summary.MetadataOrphan; got != 0 {
+		t.Errorf("MetadataOrphan = %d, want 0", got)
+	}
+}
+
 func TestFinalizeCRConfigAuditReport_TransactionalGoesToApplicationReads(t *testing.T) {
 	// Fixture matches the live d15 observation: three Z-tables, same
 	// custom namespace, different DD02L delivery classes. The audit
