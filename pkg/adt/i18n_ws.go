@@ -9,7 +9,7 @@ import (
 
 // --- XCO I18N Types ---
 
-// I18NGetParams contains parameters for reading translations via XCO_CP_I18N.
+// I18NGetParams contains parameters for reading translations via XCO I18N.
 type I18NGetParams struct {
 	TargetType        string   `json:"target_type"`
 	ObjectName        string   `json:"object_name"`
@@ -19,10 +19,12 @@ type I18NGetParams struct {
 	MessageNumber     string   `json:"message_number,omitempty"`
 	TextSymbolID      string   `json:"text_symbol_id,omitempty"`
 	TextPoolOwnerType string   `json:"text_pool_owner_type,omitempty"`
+	SubobjectName     string   `json:"subobject_name,omitempty"`
+	Position          string   `json:"position,omitempty"`
 	TextAttributes    []string `json:"text_attributes,omitempty"`
 }
 
-// I18NSetParams contains parameters for writing translations via XCO_CP_I18N.
+// I18NSetParams contains parameters for writing translations via XCO I18N.
 type I18NSetParams struct {
 	TargetType        string     `json:"target_type"`
 	ObjectName        string     `json:"object_name"`
@@ -33,6 +35,8 @@ type I18NSetParams struct {
 	MessageNumber     string     `json:"message_number,omitempty"`
 	TextSymbolID      string     `json:"text_symbol_id,omitempty"`
 	TextPoolOwnerType string     `json:"text_pool_owner_type,omitempty"`
+	SubobjectName     string     `json:"subobject_name,omitempty"`
+	Position          string     `json:"position,omitempty"`
 	Texts             []I18NText `json:"texts"`
 }
 
@@ -64,6 +68,7 @@ type I18NCompareParams struct {
 	SourceLanguage string   `json:"source_language"`
 	TargetLanguage string   `json:"target_language"`
 	Fields         []string `json:"fields,omitempty"`
+	Position       string   `json:"position,omitempty"`
 }
 
 // I18NComparisonResult contains the comparison result between two languages.
@@ -83,12 +88,36 @@ type I18NComparedItem struct {
 	HasDifference bool       `json:"has_difference"`
 }
 
+// I18NListTextsParams contains parameters for listing all translatable texts of an object.
+type I18NListTextsParams struct {
+	TargetType        string `json:"target_type"`
+	ObjectName        string `json:"object_name"`
+	Language          string `json:"language,omitempty"` // default "E"
+	TextPoolOwnerType string `json:"text_pool_owner_type,omitempty"`
+}
+
+// I18NListTextEntry represents one translatable text entry in the list.
+type I18NListTextEntry struct {
+	Level     string `json:"level"`      // entity, field, parameter, text_symbol, fixed_value, message
+	FieldName string `json:"field_name"` // field/param/symbol name (empty for entity)
+	Attribute string `json:"attribute"`  // text attribute name
+	Value     string `json:"value"`      // current text value in the requested language
+}
+
+// I18NListTextsResult contains the result of a list_texts request.
+type I18NListTextsResult struct {
+	TargetType string              `json:"target_type"`
+	ObjectName string              `json:"object_name"`
+	Language   string              `json:"language"`
+	Texts      []I18NListTextEntry `json:"texts"`
+}
+
 // --- XCO I18N WebSocket Methods ---
 
-// GetTranslationViaXCO retrieves translated texts for an ABAP object via XCO_CP_I18N.
+// GetTranslationViaXCO retrieves translated texts for an ABAP object via XCO I18N.
 // Requires ZADT_VSP WebSocket connection with i18n service deployed.
 // Supports target types: data_element, domain, data_definition, metadata_extension,
-// message_class, text_pool.
+// message_class, text_pool, application_log_object, business_configuration_object.
 func (c *AMDPWebSocketClient) GetTranslationViaXCO(ctx context.Context, params I18NGetParams) (*I18NTranslationResult, error) {
 	p := map[string]any{
 		"target_type": params.TargetType,
@@ -109,6 +138,12 @@ func (c *AMDPWebSocketClient) GetTranslationViaXCO(ctx context.Context, params I
 	}
 	if params.TextPoolOwnerType != "" {
 		p["text_pool_owner_type"] = params.TextPoolOwnerType
+	}
+	if params.SubobjectName != "" {
+		p["subobject_name"] = params.SubobjectName
+	}
+	if params.Position != "" {
+		p["position"] = params.Position
 	}
 	if len(params.TextAttributes) > 0 {
 		p["text_attributes"] = params.TextAttributes
@@ -132,7 +167,7 @@ func (c *AMDPWebSocketClient) GetTranslationViaXCO(ctx context.Context, params I
 	return &result, nil
 }
 
-// SetTranslationViaXCO writes translated texts for an ABAP object via XCO_CP_I18N.
+// SetTranslationViaXCO writes translated texts for an ABAP object via XCO I18N.
 // Requires a valid transport request (except for local/test objects, use $TMP or similar).
 // Requires ZADT_VSP WebSocket connection with i18n service deployed.
 func (c *AMDPWebSocketClient) SetTranslationViaXCO(ctx context.Context, params I18NSetParams) error {
@@ -157,6 +192,12 @@ func (c *AMDPWebSocketClient) SetTranslationViaXCO(ctx context.Context, params I
 	}
 	if params.TextPoolOwnerType != "" {
 		p["text_pool_owner_type"] = params.TextPoolOwnerType
+	}
+	if params.SubobjectName != "" {
+		p["subobject_name"] = params.SubobjectName
+	}
+	if params.Position != "" {
+		p["position"] = params.Position
 	}
 
 	resp, err := c.SendDomainRequest(ctx, "i18n", "set_translation", p, 60*time.Second)
@@ -195,10 +236,42 @@ func (c *AMDPWebSocketClient) ListInstalledLanguages(ctx context.Context) ([]Lan
 	return result.Languages, nil
 }
 
+// ListTranslatableTextsViaXCO enumerates all translatable texts for an ABAP object.
+// Returns text entries with level, field_name, attribute, and current value.
+// Requires ZADT_VSP WebSocket connection with i18n service deployed.
+func (c *AMDPWebSocketClient) ListTranslatableTextsViaXCO(ctx context.Context, params I18NListTextsParams) (*I18NListTextsResult, error) {
+	p := map[string]any{
+		"target_type": params.TargetType,
+		"object_name": params.ObjectName,
+	}
+	if params.Language != "" {
+		p["language"] = params.Language
+	}
+	if params.TextPoolOwnerType != "" {
+		p["text_pool_owner_type"] = params.TextPoolOwnerType
+	}
+
+	resp, err := c.SendDomainRequest(ctx, "i18n", "list_texts", p, 60*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("ListTranslatableTextsViaXCO: %w", err)
+	}
+	if !resp.Success {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("list_texts failed")
+	}
+
+	var result I18NListTextsResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("parse list_texts response: %w", err)
+	}
+	return &result, nil
+}
+
 // CompareTranslationsViaXCO compares translations between two languages for an ABAP object.
 // Requires ZADT_VSP WebSocket connection with i18n service deployed.
-// For data_definition, provide a list of field names to compare.
-// For data_element, all text attributes (short/medium/long label, heading) are compared.
+// Supports: data_element, data_definition (with fields), metadata_extension (with fields + position).
 func (c *AMDPWebSocketClient) CompareTranslationsViaXCO(ctx context.Context, params I18NCompareParams) (*I18NComparisonResult, error) {
 	p := map[string]any{
 		"target_type":     params.TargetType,
@@ -208,6 +281,9 @@ func (c *AMDPWebSocketClient) CompareTranslationsViaXCO(ctx context.Context, par
 	}
 	if len(params.Fields) > 0 {
 		p["fields"] = params.Fields
+	}
+	if params.Position != "" {
+		p["position"] = params.Position
 	}
 
 	resp, err := c.SendDomainRequest(ctx, "i18n", "compare_translations", p, 30*time.Second)

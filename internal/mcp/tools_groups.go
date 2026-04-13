@@ -59,7 +59,7 @@ func toolGroups() map[string][]string {
 			"WriteMessageClassTexts", "WriteDataElementLabels",
 			"GetTextPool", "CompareLanguages",
 			// XCO-based tools (require ZADT_VSP WebSocket + i18n service deployed)
-			"GetTranslationXCO", "SetTranslationXCO", "ListLanguages", "CompareTranslationsXCO",
+			"GetTranslationXCO", "SetTranslationXCO", "ListLanguages", "CompareTranslationsXCO", "ListTranslatableTextsXCO",
 		},
 	}
 	// Map "U" to same tools as "5"

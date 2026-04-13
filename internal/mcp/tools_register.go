@@ -2420,51 +2420,81 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetTranslationXCO") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTranslationXCO",
-			mcp.WithDescription("Get translated texts for any ABAP object using XCO_CP_I18N via WebSocket. "+
-				"Covers types not reachable via ADT REST: data_definition (CDS/DDLS), metadata_extension (DDLX), domain fixed values. "+
-				"Also works for: data_element, message_class, text_pool. Requires ZADT_VSP with i18n service deployed."),
+			mcp.WithDescription("Get translated texts for any ABAP object using XCO I18N via WebSocket. "+
+				"Requires ZADT_VSP with i18n service deployed.\n\n"+
+				"WORKFLOW: Use ListTranslatableTextsXCO first to discover translatable texts, then GetTranslationXCO to read them, "+
+				"then SetTranslationXCO to write translations.\n\n"+
+				"SUPPORTED TARGET TYPES AND THEIR REQUIRED PARAMETERS:\n"+
+				"• data_element: Returns short_field_label, medium_field_label, long_field_label, heading_field_label\n"+
+				"• domain: Requires 'fixed_value'. Returns fixed_value_description\n"+
+				"• data_definition (CDS/DDLS): Requires 'field_name'. Returns endusertext_label, endusertext_quickinfo\n"+
+				"• metadata_extension (DDLX): Requires 'field_name'. Optional 'position' (default 1). "+
+				"Returns endusertext_label, endusertext_quickinfo, ui_lineitem_label, ui_identification_label, "+
+				"consumption_dynamiclabel_label, ui_fieldgroup_label, ui_fieldgroup_grouplabel, ui_facet_label, consumption_valuehelpdef_label\n"+
+				"• message_class: Requires 'message_number'. Returns message_short_text\n"+
+				"• text_pool: Requires 'text_symbol_id'. Optional 'text_pool_owner_type' (class or function_group). Returns text_element_text\n"+
+				"• application_log_object: Optional 'subobject_name'. Returns short_description (for object or subobject)\n"+
+				"• business_configuration_object: Returns description"),
 			mcp.WithString("target_type",
 				mcp.Required(),
-				mcp.Description("Target type: data_element, domain, data_definition, metadata_extension, message_class, text_pool"),
+				mcp.Description("Target type: data_element, domain, data_definition, metadata_extension, message_class, text_pool, application_log_object, business_configuration_object"),
 			),
 			mcp.WithString("object_name",
 				mcp.Required(),
-				mcp.Description("Object name in uppercase (e.g., ZFIRST_NAME, ZVACATION_REQUEST)"),
+				mcp.Description("Object name in uppercase (e.g., ZFIRST_NAME, ZVACATION_REQUEST, ZLOG_OBJ)"),
 			),
 			mcp.WithString("language",
 				mcp.Required(),
 				mcp.Description("SAP language code (E=English, D=German, F=French, etc.)"),
 			),
 			mcp.WithString("field_name",
-				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate)"),
+				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate). Required for these types."),
 			),
 			mcp.WithString("fixed_value",
-				mcp.Description("Fixed value lower limit for domain targets (e.g., DE)"),
+				mcp.Description("Fixed value lower limit for domain targets (e.g., 'DE', '01'). Required for domain type."),
 			),
 			mcp.WithString("message_number",
-				mcp.Description("Message number for message_class targets (e.g., 005)"),
+				mcp.Description("Message number for message_class targets (e.g., '005'). Required for message_class type."),
 			),
 			mcp.WithString("text_symbol_id",
-				mcp.Description("Text symbol ID for text_pool targets (e.g., 001)"),
+				mcp.Description("Text symbol ID for text_pool targets (e.g., '001'). Required for text_pool type."),
 			),
 			mcp.WithString("text_pool_owner_type",
-				mcp.Description("Owner type for text_pool: class or function_group (default: class)"),
+				mcp.Description("Owner type for text_pool: 'class' (default) or 'function_group'"),
+			),
+			mcp.WithString("subobject_name",
+				mcp.Description("Subobject name for application_log_object targets. If omitted, reads the object-level description."),
+			),
+			mcp.WithString("position",
+				mcp.Description("Position index for metadata_extension UI annotations (ui_lineitem_label, ui_facet_label, etc.). Default: 1"),
 			),
 		), s.handleGetTranslationXCO)
 	}
 
 	if shouldRegister("SetTranslationXCO") {
 		s.mcpServer.AddTool(mcp.NewTool("SetTranslationXCO",
-			mcp.WithDescription("Write translated texts for any ABAP object using XCO_CP_I18N via WebSocket. "+
-				"Requires a transport request. Supports: data_element, domain, data_definition, message_class, text_pool. "+
-				"Requires ZADT_VSP with i18n service deployed."),
+			mcp.WithDescription("Write translated texts for any ABAP object using XCO I18N via WebSocket. "+
+				"Requires a transport request and ZADT_VSP with i18n service deployed.\n\n"+
+				"WORKFLOW: Use ListTranslatableTextsXCO to discover texts → GetTranslationXCO to read current values → "+
+				"SetTranslationXCO to write translations.\n\n"+
+				"SUPPORTED TARGET TYPES AND VALID ATTRIBUTES FOR 'texts' ARRAY:\n"+
+				"• data_element: short_field_label, medium_field_label, long_field_label, heading_field_label\n"+
+				"• domain: Requires 'fixed_value'. Attribute: fixed_value_description\n"+
+				"• data_definition (CDS/DDLS): Requires 'field_name'. Attributes: endusertext_label, endusertext_quickinfo\n"+
+				"• metadata_extension (DDLX): Requires 'field_name'. Optional 'position' (default 1). "+
+				"Attributes: endusertext_label, endusertext_quickinfo, ui_lineitem_label, ui_identification_label, "+
+				"consumption_dynamiclabel_label, ui_fieldgroup_label, ui_fieldgroup_grouplabel, ui_facet_label, consumption_valuehelpdef_label\n"+
+				"• message_class: Requires 'message_number'. Attribute: message_short_text\n"+
+				"• text_pool: Requires 'text_symbol_id'. Optional 'text_pool_owner_type'. Attribute: text_element_text\n"+
+				"• application_log_object: Optional 'subobject_name'. Attribute: short_description\n"+
+				"• business_configuration_object: Attribute: description"),
 			mcp.WithString("target_type",
 				mcp.Required(),
-				mcp.Description("Target type: data_element, domain, data_definition, message_class, text_pool"),
+				mcp.Description("Target type: data_element, domain, data_definition, metadata_extension, message_class, text_pool, application_log_object, business_configuration_object"),
 			),
 			mcp.WithString("object_name",
 				mcp.Required(),
-				mcp.Description("Object name in uppercase (e.g., ZFIRST_NAME)"),
+				mcp.Description("Object name in uppercase (e.g., ZFIRST_NAME, ZVACATION_REQUEST)"),
 			),
 			mcp.WithString("language",
 				mcp.Required(),
@@ -2476,22 +2506,28 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("texts",
 				mcp.Required(),
-				mcp.Description(`JSON array of attribute/value pairs, e.g.: [{"attribute":"short_field_label","value":"Vorname"},{"attribute":"long_field_label","value":"Vorname"}]`),
+				mcp.Description(`JSON array of attribute/value pairs. Use attributes matching the target_type (see tool description). Example for data_element: [{"attribute":"short_field_label","value":"Vorname"},{"attribute":"long_field_label","value":"Vorname des Mitarbeiters"}]. Example for domain: [{"attribute":"fixed_value_description","value":"Deutschland"}]`),
 			),
 			mcp.WithString("field_name",
-				mcp.Description("Field name for data_definition targets (camelCase, e.g., startDate)"),
+				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate). Required for these types."),
 			),
 			mcp.WithString("fixed_value",
-				mcp.Description("Fixed value lower limit for domain targets"),
+				mcp.Description("Fixed value lower limit for domain targets (e.g., 'DE'). Required for domain type."),
 			),
 			mcp.WithString("message_number",
-				mcp.Description("Message number for message_class targets (e.g., 005)"),
+				mcp.Description("Message number for message_class targets (e.g., '005'). Required for message_class type."),
 			),
 			mcp.WithString("text_symbol_id",
-				mcp.Description("Text symbol ID for text_pool targets"),
+				mcp.Description("Text symbol ID for text_pool targets (e.g., '001'). Required for text_pool type."),
 			),
 			mcp.WithString("text_pool_owner_type",
-				mcp.Description("Owner type for text_pool: class or function_group"),
+				mcp.Description("Owner type for text_pool: 'class' (default) or 'function_group'"),
+			),
+			mcp.WithString("subobject_name",
+				mcp.Description("Subobject name for application_log_object targets. If omitted, writes the object-level description."),
+			),
+			mcp.WithString("position",
+				mcp.Description("Position index for metadata_extension UI annotations (ui_lineitem_label, ui_facet_label, etc.). Default: 1"),
 			),
 		), s.handleSetTranslationXCO)
 	}
@@ -2499,19 +2535,27 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 	if shouldRegister("ListLanguages") {
 		s.mcpServer.AddTool(mcp.NewTool("ListLanguages",
 			mcp.WithDescription("List all SAP languages installed in the system with SAP code, ISO code, and name. "+
+				"Use this to discover available languages before translating with GetTranslationXCO/SetTranslationXCO. "+
 				"Requires ZADT_VSP with i18n service deployed."),
 		), s.handleListLanguages)
 	}
 
 	if shouldRegister("CompareTranslationsXCO") {
 		s.mcpServer.AddTool(mcp.NewTool("CompareTranslationsXCO",
-			mcp.WithDescription("Compare translations between two languages for an ABAP object using XCO_CP_I18N. "+
-				"For data_definition: provide a comma-separated list of field names. "+
-				"For data_element: all text attributes are compared (short/medium/long label, heading). "+
-				"Requires ZADT_VSP with i18n service deployed."),
+			mcp.WithDescription("Compare translations between two languages for an ABAP object using XCO I18N via WebSocket. "+
+				"Shows source vs target texts side-by-side with has_difference flag. "+
+				"Requires ZADT_VSP with i18n service deployed.\n\n"+
+				"SUPPORTED TARGET TYPES:\n"+
+				"• data_element: Compares all 4 text attributes (short/medium/long/heading field labels). No extra params needed.\n"+
+				"• data_definition (CDS/DDLS): Requires 'fields' (comma-separated field names). Compares endusertext_label per field.\n"+
+				"• metadata_extension (DDLX): Requires 'fields' (comma-separated field names). Optional 'position' (default 1). "+
+				"Compares all 9 ME text attributes per field (endusertext_label, endusertext_quickinfo, ui_lineitem_label, "+
+				"ui_identification_label, consumption_dynamiclabel_label, ui_fieldgroup_label, ui_fieldgroup_grouplabel, "+
+				"ui_facet_label, consumption_valuehelpdef_label).\n\n"+
+				"TIP: Use ListTranslatableTextsXCO first to discover field names, then pass them to 'fields' parameter."),
 			mcp.WithString("target_type",
 				mcp.Required(),
-				mcp.Description("Target type: data_element, data_definition"),
+				mcp.Description("Target type: data_element, data_definition, metadata_extension"),
 			),
 			mcp.WithString("object_name",
 				mcp.Required(),
@@ -2526,8 +2570,45 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				mcp.Description("Target language SAP code to compare against"),
 			),
 			mcp.WithString("fields",
-				mcp.Description("Comma-separated field names for data_definition targets (e.g., startDate,endDate,status)"),
+				mcp.Description("Comma-separated field names for data_definition/metadata_extension targets (e.g., startDate,endDate,status). Required for these types."),
+			),
+			mcp.WithString("position",
+				mcp.Description("Position index for metadata_extension UI annotations. Default: 1"),
 			),
 		), s.handleCompareTranslationsXCO)
+	}
+
+	if shouldRegister("ListTranslatableTextsXCO") {
+		s.mcpServer.AddTool(mcp.NewTool("ListTranslatableTextsXCO",
+			mcp.WithDescription("List all translatable texts for any ABAP object using XCO I18N via WebSocket. "+
+				"Returns text entries with: level (entity/field/fixed_value/message/text_symbol), field_name, attribute name, "+
+				"and current value in the requested language. "+
+				"Requires ZADT_VSP with i18n service deployed.\n\n"+
+				"USE THIS FIRST to discover what texts exist before using GetTranslationXCO or SetTranslationXCO.\n\n"+
+				"SUPPORTED TARGET TYPES:\n"+
+				"• data_element: Lists all 4 label attributes (short/medium/long/heading)\n"+
+				"• domain: Lists all fixed values with their descriptions\n"+
+				"• data_definition (CDS/DDLS): Lists all fields with endusertext_label and endusertext_quickinfo\n"+
+				"• metadata_extension (DDLX): Lists all fields with all 9 annotation text attributes\n"+
+				"• message_class: Lists all messages with message_short_text\n"+
+				"• text_pool: Lists all text symbols. Use 'text_pool_owner_type' for function_group (default: class)\n"+
+				"• application_log_object: Lists object description (subobjects not yet enumerated)\n"+
+				"• business_configuration_object: Lists object description\n\n"+
+				"WORKFLOW: ListTranslatableTextsXCO → GetTranslationXCO (read) → SetTranslationXCO (write)"),
+			mcp.WithString("target_type",
+				mcp.Required(),
+				mcp.Description("Target type: data_element, domain, data_definition, metadata_extension, message_class, text_pool, application_log_object, business_configuration_object"),
+			),
+			mcp.WithString("object_name",
+				mcp.Required(),
+				mcp.Description("Object name in uppercase (e.g., ZVACATION_REQUEST, ZSTATUS_DOMAIN, ZTEST_MSG_CLASS)"),
+			),
+			mcp.WithString("language",
+				mcp.Description("SAP language code for current text values (E=English, D=German, F=French, etc.). Default: E"),
+			),
+			mcp.WithString("text_pool_owner_type",
+				mcp.Description("Owner type for text_pool targets: 'class' (default) or 'function_group'"),
+			),
+		), s.handleListTranslatableTextsXCO)
 	}
 }
