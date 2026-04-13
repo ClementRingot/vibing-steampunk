@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.40.4] - 2026-04-13
+### Bug Fixes
+
+- **install:** Skip I18N service on ABAP Platform < 2022 (release < 756) ([`6675f0a`](https://github.com/oisee/vibing-steampunk/commit/6675f0aa23e622c4f2128c94cf3dd743f99ffeb2))
+
+
+
 ## [2.40.3] - 2026-04-13
 ### Bug Fixes
 
