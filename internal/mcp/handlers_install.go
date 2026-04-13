@@ -352,6 +352,17 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		skipGitService = true
 	}
 
+	// Check for HANA (for AMDP service)
+	skipAmdpService := false
+	featureProber := adt.NewFeatureProber(s.adtClient, adt.DefaultFeatureConfig(), false)
+	hanaStatus := featureProber.Probe(ctx, adt.FeatureHANA)
+	if hanaStatus.Available {
+		sb.WriteString("  ✓ HANA detected → AMDP service will be deployed\n")
+	} else {
+		sb.WriteString("  ⚠ Non-HANA database → AMDP service will be skipped\n")
+		skipAmdpService = true
+	}
+
 	// Check existing objects
 	objects := embedded.GetObjects()
 	existingObjects := []string{}
@@ -372,8 +383,10 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		sb.WriteString("Check complete (--check_only mode, no changes made).\n\n")
 		sb.WriteString("Objects to deploy:\n")
 		for i, obj := range objects {
-			if obj.Optional && skipGitService && obj.Name == "ZCL_VSP_GIT_SERVICE" {
+			if obj.Name == "ZCL_VSP_GIT_SERVICE" && skipGitService {
 				fmt.Fprintf(&sb, "  [%d/%d] %s - SKIP (no abapGit)\n", i+1, len(objects), obj.Name)
+			} else if obj.Name == "ZCL_VSP_AMDP_SERVICE" && skipAmdpService {
+				fmt.Fprintf(&sb, "  [%d/%d] %s - SKIP (non-HANA database)\n", i+1, len(objects), obj.Name)
 			} else {
 				fmt.Fprintf(&sb, "  [%d/%d] %s - %s\n", i+1, len(objects), obj.Name, obj.Description)
 			}
@@ -396,11 +409,15 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		}
 		err := s.adtClient.CreateObject(ctx, createOpts)
 		if err != nil {
-			// On older SAP releases (e.g. 7.40), /sap/bc/adt/packages may not exist.
-			// Don't abort — the package may have been pre-created via SE21/SE80,
-			// and WriteSource will fail with a clear error if it truly doesn't exist.
-			fmt.Fprintf(&sb, "  ⚠ Package creation failed: %v\n", err)
-			fmt.Fprintf(&sb, "  → Continuing anyway (package may already exist via SE21/SE80)\n\n")
+			if strings.Contains(err.Error(), "AlreadyExists") || strings.Contains(err.Error(), "already exist") {
+				fmt.Fprintf(&sb, "  ✓ Package %s already exists\n\n", packageName)
+			} else {
+				// On older SAP releases (e.g. 7.40), /sap/bc/adt/packages may not exist.
+				// Don't abort — the package may have been pre-created via SE21/SE80,
+				// and WriteSource will fail with a clear error if it truly doesn't exist.
+				fmt.Fprintf(&sb, "  ⚠ Package creation failed: %v\n", err)
+				fmt.Fprintf(&sb, "  → Continuing anyway (package may already exist via SE21/SE80)\n\n")
+			}
 		} else {
 			fmt.Fprintf(&sb, "  ✓ Package %s created\n\n", packageName)
 		}
@@ -419,6 +436,13 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		// Skip Git service if no abapGit
 		if obj.Name == "ZCL_VSP_GIT_SERVICE" && skipGitService {
 			fmt.Fprintf(&sb, "  [%d/%d] %s ⊘ Skipped (no abapGit)\n", i+1, len(objects), obj.Name)
+			skipped = append(skipped, obj.Name)
+			continue
+		}
+
+		// Skip AMDP service if no HANA
+		if obj.Name == "ZCL_VSP_AMDP_SERVICE" && skipAmdpService {
+			fmt.Fprintf(&sb, "  [%d/%d] %s ⊘ Skipped (non-HANA database)\n", i+1, len(objects), obj.Name)
 			skipped = append(skipped, obj.Name)
 			continue
 		}
@@ -469,7 +493,11 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 	sb.WriteString("\nFeatures unlocked:\n")
 	sb.WriteString("  ✓ WebSocket debugging (TPDAPI)\n")
 	sb.WriteString("  ✓ RFC/BAPI execution\n")
-	sb.WriteString("  ✓ AMDP debugging (experimental)\n")
+	if !skipAmdpService {
+		sb.WriteString("  ✓ AMDP debugging (experimental)\n")
+	} else {
+		sb.WriteString("  ✗ AMDP debugging (requires HANA database)\n")
+	}
 	if hasAbapGit && !skipGitService {
 		sb.WriteString("  ✓ abapGit export (158 object types)\n")
 	} else {
