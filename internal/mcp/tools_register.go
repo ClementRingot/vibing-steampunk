@@ -2446,6 +2446,10 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				"Requires a transport request and ZADT_VSP with i18n service deployed.\n\n"+
 				"WORKFLOW: Use ListTranslatableTextsXCO to discover texts → GetTranslationXCO to read current values → "+
 				"SetTranslationXCO to write translations.\n\n"+
+				"TRANSPORT: NEVER invent a transport number. "+
+				"1) Call ListTransports to find an existing modifiable transport for the current user. "+
+				"2) If none exists, call CreateTransport to create one. "+
+				"3) If both fail, ask the user for a valid transport number.\n\n"+
 				"SUPPORTED TARGET TYPES AND VALID ATTRIBUTES FOR 'texts' ARRAY:\n"+
 				"• data_element: short_field_label, medium_field_label, long_field_label, heading_field_label\n"+
 				"• domain: Requires 'fixed_value'. Attribute: fixed_value_description\n"+
@@ -2471,7 +2475,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("transport",
 				mcp.Required(),
-				mcp.Description("Transport request number (e.g., A4HK900123)"),
+				mcp.Description("Transport request number. NEVER invent — use ListTransports to find one, or CreateTransport to create one, or ask the user. Format: e.g., A4HK900123"),
 			),
 			mcp.WithString("texts",
 				mcp.Required(),
