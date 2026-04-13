@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.40.2] - 2026-04-13
+### Bug Fixes
+
+- **deploy:** Reorder syntax check before lock, fix POSIX regex deprecation ([`88af5fa`](https://github.com/oisee/vibing-steampunk/commit/88af5fa74b1f21680ea21a5178358e53794f5ce8))
+
+
+
 ## [2.41.0] - 2026-04-13
 ### Bug Fixes
 
