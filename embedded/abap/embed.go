@@ -108,7 +108,7 @@ func GetObjects() []ObjectInfo {
 			Type:        "CLAS",
 			Name:        "ZCL_VSP_I18N_SERVICE",
 			Source:      ZclVspI18NService,
-			Description: "I18N domain - full translation coverage via XCO_CP_I18N (requires SAP_BASIS >= 7.57)",
+			Description: "I18N domain - translation via XCO_CP_I18N",
 			Optional:    false,
 		},
 		{
