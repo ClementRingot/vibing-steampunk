@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2.40.0] - 2026-04-13
+### Bug Fixes
+
+- **test:** Use expert mode and schema-level validation for i18n tests ([`909d486`](https://github.com/oisee/vibing-steampunk/commit/909d4861e274d6ef933f9c513f01c3b6af4bd868))
+- **test:** Restore context import needed by getRegisteredTools ([`8916a8f`](https://github.com/oisee/vibing-steampunk/commit/8916a8fcbda4d59f52d8e397c859b795021b1e59))
+
+
 ### Features
 
 - **i18n:** Add ListTranslatableTextsXCO tool and improve all i18n tool documentation ([`588fcce`](https://github.com/oisee/vibing-steampunk/commit/588fcce2d0e583e3ab3a5773f4d76442e00e3204))
