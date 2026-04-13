@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.40.0] - 2026-04-13
+### Features
+
+- **i18n:** Add ListTranslatableTextsXCO tool and improve all i18n tool documentation ([`588fcce`](https://github.com/oisee/vibing-steampunk/commit/588fcce2d0e583e3ab3a5773f4d76442e00e3204))
+
+
+
 ## [2.39.0] - 2026-04-12
 ### Features
 
