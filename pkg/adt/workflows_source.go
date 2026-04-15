@@ -297,10 +297,35 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 	}
 
 	// Execute create or update workflow
+	// On load-balanced SAP systems, the existence check may hit a different backend
+	// than the create/update call. Handle cross-backend inconsistencies:
+	// - Create returns "AlreadyExists" → fallback to Update
+	// - Update returns 404 "does not exist" → fallback to Create
 	if actualMode == WriteModeCreate {
-		return c.writeSourceCreate(ctx, objectType, name, source, opts)
+		wsResult, err := c.writeSourceCreate(ctx, objectType, name, source, opts)
+		if err == nil && wsResult != nil && !wsResult.Success && opts.Mode == WriteModeUpsert {
+			msg := wsResult.Message
+			if strings.Contains(msg, "AlreadyExists") || strings.Contains(msg, "already exist") {
+				// Object exists on another backend — fall back to update
+				return c.writeSourceUpdate(ctx, objectType, name, source, opts)
+			}
+			if strings.Contains(msg, "status 404") || strings.Contains(msg, "does not exist") {
+				// Lock/update hit a backend that doesn't see the object yet — retry create
+				time.Sleep(5 * time.Second)
+				return c.writeSourceCreate(ctx, objectType, name, source, opts)
+			}
+		}
+		return wsResult, err
 	} else {
-		return c.writeSourceUpdate(ctx, objectType, name, source, opts)
+		wsResult, err := c.writeSourceUpdate(ctx, objectType, name, source, opts)
+		if err == nil && wsResult != nil && !wsResult.Success && opts.Mode == WriteModeUpsert {
+			msg := wsResult.Message
+			if strings.Contains(msg, "status 404") || strings.Contains(msg, "does not exist") {
+				// Object not found on this backend — fall back to create
+				return c.writeSourceCreate(ctx, objectType, name, source, opts)
+			}
+		}
+		return wsResult, err
 	}
 }
 
