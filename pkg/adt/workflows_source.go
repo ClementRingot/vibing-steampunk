@@ -169,41 +169,6 @@ type WriteSourceResult struct {
 	Message       string                     `json:"message,omitempty"`
 }
 
-// isAlreadyExistsError checks if an error indicates the object already exists.
-// This happens on load-balanced SAP systems when the existence check hits one backend
-// but CreateObject hits another backend that already has the object.
-func isAlreadyExistsError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "AlreadyExists") || strings.Contains(msg, "already exist")
-}
-
-// lockWithRetry attempts to lock an object, retrying on 404 errors that can occur
-// on load-balanced SAP systems when the Lock request hits a different backend than
-// the preceding CreateObject. Retries up to 8 times with exponential backoff (~60s total).
-func (c *Client) lockWithRetry(ctx context.Context, objectURL string) (*LockResult, error) {
-	var lock *LockResult
-	var err error
-	backoffs := []time.Duration{
-		1 * time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second,
-		10 * time.Second, 10 * time.Second, 12 * time.Second, 15 * time.Second,
-	}
-	for attempt := 0; attempt <= len(backoffs); attempt++ {
-		lock, err = c.LockObject(ctx, objectURL, "MODIFY")
-		if err == nil {
-			return lock, nil
-		}
-		if strings.Contains(err.Error(), "status 404") && attempt < len(backoffs) {
-			time.Sleep(backoffs[attempt])
-			continue
-		}
-		break
-	}
-	return nil, err
-}
-
 // WriteSource is a unified tool for writing ABAP source code across different object types.
 // Replaces WriteProgram, WriteClass, CreateAndActivateProgram, CreateClassWithTests.
 //
@@ -308,35 +273,18 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 	}
 
 	// Execute create or update workflow
-	// On load-balanced SAP systems, the existence check may hit a different backend
-	// than the create/update call. Handle cross-backend inconsistencies:
-	// - Create returns "AlreadyExists" → fallback to Update
-	// - Update returns 404 "does not exist" → fallback to Create
 	if actualMode == WriteModeCreate {
 		wsResult, err := c.writeSourceCreate(ctx, objectType, name, source, opts)
+		// On load-balanced SAP systems, the existence check may hit a different backend
+		// than CreateObject. If create fails with "already exists", fall back to update.
 		if err == nil && wsResult != nil && !wsResult.Success && opts.Mode == WriteModeUpsert {
-			msg := wsResult.Message
-			if strings.Contains(msg, "AlreadyExists") || strings.Contains(msg, "already exist") {
-				// Object exists on another backend — fall back to update
+			if strings.Contains(wsResult.Message, "already exist") || strings.Contains(wsResult.Message, "AlreadyExists") {
 				return c.writeSourceUpdate(ctx, objectType, name, source, opts)
-			}
-			if strings.Contains(msg, "status 404") || strings.Contains(msg, "does not exist") {
-				// Lock/update hit a backend that doesn't see the object yet — retry create
-				time.Sleep(5 * time.Second)
-				return c.writeSourceCreate(ctx, objectType, name, source, opts)
 			}
 		}
 		return wsResult, err
 	} else {
-		wsResult, err := c.writeSourceUpdate(ctx, objectType, name, source, opts)
-		if err == nil && wsResult != nil && !wsResult.Success && opts.Mode == WriteModeUpsert {
-			msg := wsResult.Message
-			if strings.Contains(msg, "status 404") || strings.Contains(msg, "does not exist") {
-				// Object not found on this backend — fall back to create
-				return c.writeSourceCreate(ctx, objectType, name, source, opts)
-			}
-		}
-		return wsResult, err
+		return c.writeSourceUpdate(ctx, objectType, name, source, opts)
 	}
 }
 
@@ -399,7 +347,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 				PackageName: opts.Package,
 				Transport:   opts.Transport,
 			})
-			if err != nil && !isAlreadyExistsError(err) {
+			if err != nil {
 				result.Message = fmt.Sprintf("Failed to create class: %v", err)
 				return result, nil
 			}
@@ -430,7 +378,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 			PackageName: opts.Package,
 			Transport:   opts.Transport,
 		})
-		if err != nil && !isAlreadyExistsError(err) {
+		if err != nil {
 			result.Message = fmt.Sprintf("Failed to create interface: %v", err)
 			return result, nil
 		}
@@ -455,8 +403,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		}
 		result.SyntaxErrors = syntaxErrors
 
-		// Lock (with retry for load-balanced systems)
-		lock, err := c.lockWithRetry(ctx, objectURL)
+		// Lock
+		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
 			return result, nil
@@ -531,7 +479,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 			createOpts.Source = source // BDEF requires source embedded in creation request
 		}
 		err := c.CreateObject(ctx, createOpts)
-		if err != nil && !isAlreadyExistsError(err) {
+		if err != nil {
 			result.Message = fmt.Sprintf("Failed to create %s: %v", objectType, err)
 			return result, nil
 		}
@@ -540,8 +488,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		if objectType == "BDEF" {
 			sourceURL := objectURL + "/source/main"
 
-			// Lock (with retry for load-balanced systems)
-			lock, err := c.lockWithRetry(ctx, objectURL)
+			// Lock
+			lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 			if err != nil {
 				result.Message = fmt.Sprintf("Failed to lock BDEF: %v", err)
 				return result, nil
@@ -597,8 +545,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		}
 		result.SyntaxErrors = syntaxErrors
 
-		// Lock (with retry for load-balanced systems)
-		lock, err := c.lockWithRetry(ctx, objectURL)
+		// Lock
+		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
 			return result, nil

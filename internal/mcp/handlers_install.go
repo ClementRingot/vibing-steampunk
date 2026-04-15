@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	embedded "github.com/oisee/vibing-steampunk/embedded/abap"
@@ -476,19 +477,42 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 
 		fmt.Fprintf(&sb, "  [%d/%d] %s ", i+1, len(objects), obj.Name)
 
-		// Use WriteSource to create/update
-		opts := &adt.WriteSourceOptions{
-			Package:     packageName,
-			Mode:        adt.WriteModeUpsert,
-			Description: obj.Description,
+		// Use WriteSource to create/update with retry for load-balanced SAP systems.
+		// On load-balanced systems, requests may hit different backends where objects
+		// are not yet visible, causing random 404, AlreadyExists, or activation errors.
+		// Retrying the entire WriteSource call is the most robust approach.
+		const maxRetries = 3
+		retryDelays := []time.Duration{5 * time.Second, 8 * time.Second, 12 * time.Second}
+		var wsResult *adt.WriteSourceResult
+		var err error
+		deploySuccess := false
+
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if attempt > 0 {
+				fmt.Fprintf(&sb, "\n    ↻ Retry %d/%d after %v... ", attempt, maxRetries, retryDelays[attempt-1])
+				time.Sleep(retryDelays[attempt-1])
+			}
+
+			opts := &adt.WriteSourceOptions{
+				Package:     packageName,
+				Mode:        adt.WriteModeUpsert,
+				Description: obj.Description,
+			}
+			wsResult, err = s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
+			if err == nil && wsResult != nil && wsResult.Success {
+				deploySuccess = true
+				break
+			}
 		}
-		wsResult, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-		if err != nil {
-			fmt.Fprintf(&sb, "✗ Failed: %v\n", err)
-			failed = append(failed, obj.Name+": "+err.Error())
-		} else if wsResult != nil && !wsResult.Success {
-			fmt.Fprintf(&sb, "✗ Failed: %s\n", wsResult.Message)
-			failed = append(failed, obj.Name+": "+wsResult.Message)
+
+		if !deploySuccess {
+			if err != nil {
+				fmt.Fprintf(&sb, "✗ Failed: %v\n", err)
+				failed = append(failed, obj.Name+": "+err.Error())
+			} else if wsResult != nil {
+				fmt.Fprintf(&sb, "✗ Failed: %s\n", wsResult.Message)
+				failed = append(failed, obj.Name+": "+wsResult.Message)
+			}
 		} else {
 			sb.WriteString("✓ Deployed\n")
 			deployed = append(deployed, obj.Name)
