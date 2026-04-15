@@ -171,17 +171,20 @@ type WriteSourceResult struct {
 
 // lockWithRetry attempts to lock an object, retrying on 404 errors that can occur
 // on load-balanced SAP systems when the Lock request hits a different backend than
-// the preceding CreateObject. Retries up to 5 times with increasing backoff (1s-4s).
+// the preceding CreateObject. Retries up to 8 times with exponential backoff (~60s total).
 func (c *Client) lockWithRetry(ctx context.Context, objectURL string) (*LockResult, error) {
 	var lock *LockResult
 	var err error
-	backoffs := []time.Duration{1 * time.Second, 2 * time.Second, 3 * time.Second, 4 * time.Second}
-	for attempt := 0; attempt < 5; attempt++ {
+	backoffs := []time.Duration{
+		1 * time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second,
+		10 * time.Second, 10 * time.Second, 12 * time.Second, 15 * time.Second,
+	}
+	for attempt := 0; attempt <= len(backoffs); attempt++ {
 		lock, err = c.LockObject(ctx, objectURL, "MODIFY")
 		if err == nil {
 			return lock, nil
 		}
-		if strings.Contains(err.Error(), "status 404") && attempt < 4 {
+		if strings.Contains(err.Error(), "status 404") && attempt < len(backoffs) {
 			time.Sleep(backoffs[attempt])
 			continue
 		}
