@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // --- Workflow Tools ---
@@ -145,18 +144,10 @@ func (c *Client) WriteClass(ctx context.Context, className string, source string
 	}
 	result.SyntaxErrors = syntaxErrors
 
-	// Step 2: Lock (with retry for newly created objects that may not be immediately available)
-	var lock *LockResult
-	for attempt := 0; attempt < 3; attempt++ {
-		lock, err = c.LockObject(ctx, objectURL, "MODIFY")
-		if err == nil {
-			break
-		}
-		// Retry on 404 "does not exist" - can happen right after CreateObject
-		if strings.Contains(err.Error(), "status 404") && attempt < 2 {
-			time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
-			continue
-		}
+	// Step 2: Lock (with retry for load-balanced systems where newly created objects
+	// may not be immediately visible on all backends)
+	lock, err := c.lockWithRetry(ctx, objectURL)
+	if err != nil {
 		result.Message = fmt.Sprintf("Failed to lock object: %v", err)
 		return result, nil
 	}
