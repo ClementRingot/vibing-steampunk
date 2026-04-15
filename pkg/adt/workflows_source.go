@@ -169,6 +169,26 @@ type WriteSourceResult struct {
 	Message       string                     `json:"message,omitempty"`
 }
 
+// lockWithRetry attempts to lock an object, retrying on 404 errors that can occur
+// on load-balanced SAP systems when the Lock request hits a different backend than
+// the preceding CreateObject. Retries up to 3 times with exponential backoff.
+func (c *Client) lockWithRetry(ctx context.Context, objectURL string) (*LockResult, error) {
+	var lock *LockResult
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		lock, err = c.LockObject(ctx, objectURL, "MODIFY")
+		if err == nil {
+			return lock, nil
+		}
+		if strings.Contains(err.Error(), "status 404") && attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+			continue
+		}
+		break
+	}
+	return nil, err
+}
+
 // WriteSource is a unified tool for writing ABAP source code across different object types.
 // Replaces WriteProgram, WriteClass, CreateAndActivateProgram, CreateClassWithTests.
 //
@@ -395,8 +415,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		}
 		result.SyntaxErrors = syntaxErrors
 
-		// Lock
-		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+		// Lock (with retry for load-balanced systems)
+		lock, err := c.lockWithRetry(ctx, objectURL)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
 			return result, nil
@@ -480,8 +500,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		if objectType == "BDEF" {
 			sourceURL := objectURL + "/source/main"
 
-			// Lock
-			lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+			// Lock (with retry for load-balanced systems)
+			lock, err := c.lockWithRetry(ctx, objectURL)
 			if err != nil {
 				result.Message = fmt.Sprintf("Failed to lock BDEF: %v", err)
 				return result, nil
@@ -537,8 +557,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		}
 		result.SyntaxErrors = syntaxErrors
 
-		// Lock
-		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+		// Lock (with retry for load-balanced systems)
+		lock, err := c.lockWithRetry(ctx, objectURL)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
 			return result, nil
