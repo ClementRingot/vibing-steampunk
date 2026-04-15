@@ -278,7 +278,15 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 
 	// Execute create or update workflow
 	if actualMode == WriteModeCreate {
-		return c.writeSourceCreate(ctx, objectType, name, source, opts)
+		wsResult, err := c.writeSourceCreate(ctx, objectType, name, source, opts)
+		// On load-balanced SAP systems, the existence check may hit a different backend
+		// than CreateObject. If create fails with "already exists", fall back to update.
+		if err == nil && wsResult != nil && !wsResult.Success && opts.Mode == WriteModeUpsert {
+			if strings.Contains(wsResult.Message, "already exist") || strings.Contains(wsResult.Message, "AlreadyExists") {
+				return c.writeSourceUpdate(ctx, objectType, name, source, opts)
+			}
+		}
+		return wsResult, err
 	} else {
 		return c.writeSourceUpdate(ctx, objectType, name, source, opts)
 	}
