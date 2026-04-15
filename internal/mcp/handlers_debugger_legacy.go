@@ -1,6 +1,7 @@
 // Package mcp provides the MCP server implementation for ABAP ADT tools.
-// handlers_debugger_legacy.go contains handlers for legacy REST-based debugging.
-// These use REST API which works for Listen/Attach/Step but not for breakpoints.
+// handlers_debugger_legacy.go contains handlers for debugger session operations.
+// These now use WebSocket (ZADT_VSP) via TPDAPI for all operations (listen, attach, step, etc.)
+// matching the same transport used for breakpoints.
 package mcp
 
 import (
@@ -9,10 +10,9 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
-// routeDebuggerLegacyAction routes "debug" sub-actions for the legacy REST-based debugger.
+// routeDebuggerLegacyAction routes "debug" sub-actions for the debugger session operations.
 func (s *Server) routeDebuggerLegacyAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
 	if action != "debug" {
 		return nil, false, nil
@@ -34,55 +34,45 @@ func (s *Server) routeDebuggerLegacyAction(ctx context.Context, action, objectTy
 	return nil, false, nil
 }
 
-// --- Legacy REST-based Debugger Handlers (fallback) ---
+// --- WebSocket-based Debugger Session Handlers (via ZADT_VSP / TPDAPI) ---
 
 func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	user, _ := request.GetArguments()["user"].(string)
-	if user == "" {
-		user = s.config.Username // Default to connection user
-	}
 	timeout := 60 // default
 	if t, ok := request.GetArguments()["timeout"].(float64); ok && t > 0 {
 		timeout = int(t)
 		if timeout > 240 {
-			timeout = 240 // max 240 seconds
+			timeout = 240
 		}
 	}
 
-	result, err := s.adtClient.DebuggerListen(ctx, &adt.ListenOptions{
-		DebuggingMode:  adt.DebuggingModeUser,
-		User:           user,
-		TimeoutSeconds: timeout,
-	})
+	// Ensure WebSocket client is connected
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v. Ensure ZADT_VSP is deployed and SAPC/SICF are configured.", err)), nil
+	}
+
+	debuggees, err := s.debugWSClient.Listen(ctx, timeout)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("DebuggerListen failed: %v", err)), nil
 	}
 
-	if result.TimedOut {
+	if len(debuggees) == 0 {
 		return mcp.NewToolResultText("Listener timed out - no debuggee hit a breakpoint within the timeout period."), nil
 	}
 
-	if result.Conflict != nil {
-		return mcp.NewToolResultText(fmt.Sprintf("Listener conflict detected: %s (user: %s)",
-			result.Conflict.ConflictText, result.Conflict.IdeUser)), nil
+	var sb strings.Builder
+	sb.WriteString("Debuggee caught!\n\n")
+	for i, d := range debuggees {
+		if i > 0 {
+			sb.WriteString("\n---\n")
+		}
+		fmt.Fprintf(&sb, "Debuggee ID: %s\n", d.ID)
+		fmt.Fprintf(&sb, "User: %s\n", d.User)
+		fmt.Fprintf(&sb, "Program: %s\n", d.Program)
+		fmt.Fprintf(&sb, "Host: %s\n", d.Host)
+		fmt.Fprintf(&sb, "Same Server: %v\n", d.SameServer)
 	}
-
-	if result.Debuggee != nil {
-		var sb strings.Builder
-		sb.WriteString("Debuggee caught!\n\n")
-		fmt.Fprintf(&sb, "Debuggee ID: %s\n", result.Debuggee.ID)
-		fmt.Fprintf(&sb, "User: %s\n", result.Debuggee.User)
-		fmt.Fprintf(&sb, "Program: %s\n", result.Debuggee.Program)
-		fmt.Fprintf(&sb, "Include: %s\n", result.Debuggee.Include)
-		fmt.Fprintf(&sb, "Line: %d\n", result.Debuggee.Line)
-		fmt.Fprintf(&sb, "Kind: %s\n", result.Debuggee.Kind)
-		fmt.Fprintf(&sb, "Attachable: %v\n", result.Debuggee.IsAttachable)
-		fmt.Fprintf(&sb, "App Server: %s\n", result.Debuggee.AppServer)
-		sb.WriteString("\nUse DebuggerAttach with the debuggee_id to attach to this session.")
-		return mcp.NewToolResultText(sb.String()), nil
-	}
-
-	return mcp.NewToolResultText("Listener returned with no result."), nil
+	sb.WriteString("\nUse DebuggerAttach with the debuggee_id to attach to this session.")
+	return mcp.NewToolResultText(sb.String()), nil
 }
 
 func (s *Server) handleDebuggerAttach(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -91,44 +81,33 @@ func (s *Server) handleDebuggerAttach(ctx context.Context, request mcp.CallToolR
 		return newToolResultError("debuggee_id is required"), nil
 	}
 
-	user, _ := request.GetArguments()["user"].(string)
-	if user == "" {
-		user = s.config.Username // Default to connection user
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v", err)), nil
 	}
 
-	result, err := s.adtClient.DebuggerAttach(ctx, debuggeeID, user)
+	frame, err := s.debugWSClient.Attach(ctx, debuggeeID)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("DebuggerAttach failed: %v", err)), nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString("Successfully attached to debuggee!\n\n")
-	fmt.Fprintf(&sb, "Debug Session ID: %s\n", result.DebugSessionID)
-	fmt.Fprintf(&sb, "Process ID: %d\n", result.ProcessID)
-	fmt.Fprintf(&sb, "Server: %s\n", result.ServerName)
-	fmt.Fprintf(&sb, "Stepping Possible: %v\n", result.IsSteppingPossible)
-	fmt.Fprintf(&sb, "Termination Possible: %v\n", result.IsTerminationPossible)
-
-	if len(result.ReachedBreakpoints) > 0 {
-		sb.WriteString("\nReached Breakpoints:\n")
-		for _, bp := range result.ReachedBreakpoints {
-			fmt.Fprintf(&sb, "  - ID: %s (kind: %s)\n", bp.ID, bp.Kind)
-		}
+	fmt.Fprintf(&sb, "Debuggee ID: %s\n", debuggeeID)
+	if frame != nil {
+		fmt.Fprintf(&sb, "Program: %s\n", frame.Program)
+		fmt.Fprintf(&sb, "Include: %s\n", frame.Include)
+		fmt.Fprintf(&sb, "Line: %d\n", frame.Line)
 	}
-
-	if len(result.Actions) > 0 {
-		sb.WriteString("\nAvailable Actions:\n")
-		for _, action := range result.Actions {
-			fmt.Fprintf(&sb, "  - %s: %s\n", action.Name, action.Title)
-		}
-	}
-
 	sb.WriteString("\nUse DebuggerGetStack to see the call stack, DebuggerGetVariables to inspect variables.")
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
 func (s *Server) handleDebuggerDetach(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	err := s.adtClient.DebuggerDetach(ctx)
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v", err)), nil
+	}
+
+	err := s.debugWSClient.Detach(ctx)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("DebuggerDetach failed: %v", err)), nil
 	}
@@ -142,72 +121,79 @@ func (s *Server) handleDebuggerStep(ctx context.Context, request mcp.CallToolReq
 		return newToolResultError("step_type is required"), nil
 	}
 
-	// Map string to step type
-	var stepType adt.DebugStepType
+	// Map MCP step type names to WebSocket step type names
+	var wsStepType string
 	switch stepTypeStr {
 	case "stepInto":
-		stepType = adt.DebugStepInto
+		wsStepType = "into"
 	case "stepOver":
-		stepType = adt.DebugStepOver
+		wsStepType = "over"
 	case "stepReturn":
-		stepType = adt.DebugStepReturn
+		wsStepType = "return"
 	case "stepContinue":
-		stepType = adt.DebugStepContinue
-	case "stepRunToLine":
-		stepType = adt.DebugStepRunToLine
-	case "stepJumpToLine":
-		stepType = adt.DebugStepJumpToLine
+		wsStepType = "continue"
 	default:
-		return newToolResultError(fmt.Sprintf("Invalid step_type: %s. Valid values: stepInto, stepOver, stepReturn, stepContinue, stepRunToLine, stepJumpToLine", stepTypeStr)), nil
+		return newToolResultError(fmt.Sprintf("Invalid step_type: %s. Valid values: stepInto, stepOver, stepReturn, stepContinue", stepTypeStr)), nil
 	}
 
-	uri, _ := request.GetArguments()["uri"].(string)
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v", err)), nil
+	}
 
-	result, err := s.adtClient.DebuggerStep(ctx, stepType, uri)
+	frame, err := s.debugWSClient.Step(ctx, wsStepType)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("DebuggerStep failed: %v", err)), nil
 	}
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Step '%s' executed.\n\n", stepTypeStr)
-	fmt.Fprintf(&sb, "Session: %s\n", result.DebugSessionID)
-	fmt.Fprintf(&sb, "Debuggee Changed: %v\n", result.IsDebuggeeChanged)
-	fmt.Fprintf(&sb, "Stepping Possible: %v\n", result.IsSteppingPossible)
-
-	if len(result.ReachedBreakpoints) > 0 {
-		sb.WriteString("\nReached Breakpoints:\n")
-		for _, bp := range result.ReachedBreakpoints {
-			fmt.Fprintf(&sb, "  - ID: %s (kind: %s)\n", bp.ID, bp.Kind)
-		}
+	if frame == nil {
+		return mcp.NewToolResultText(fmt.Sprintf("Step '%s' executed. Debuggee has ended.", stepTypeStr)), nil
 	}
 
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Step '%s' executed.\n\n", stepTypeStr)
+	fmt.Fprintf(&sb, "Program: %s\n", frame.Program)
+	fmt.Fprintf(&sb, "Include: %s\n", frame.Include)
+	fmt.Fprintf(&sb, "Line: %d\n", frame.Line)
+	if frame.Procedure != "" {
+		fmt.Fprintf(&sb, "Procedure: %s\n", frame.Procedure)
+	}
 	sb.WriteString("\nUse DebuggerGetStack to see current position, DebuggerGetVariables to inspect variables.")
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
 func (s *Server) handleDebuggerGetStack(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	result, err := s.adtClient.DebuggerGetStack(ctx, true)
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v", err)), nil
+	}
+
+	stack, err := s.debugWSClient.GetStack(ctx)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("DebuggerGetStack failed: %v", err)), nil
 	}
 
+	if len(stack) == 0 {
+		return mcp.NewToolResultText("Call stack is empty."), nil
+	}
+
 	var sb strings.Builder
 	sb.WriteString("Call Stack:\n\n")
-	fmt.Fprintf(&sb, "Server: %s\n", result.ServerName)
-	fmt.Fprintf(&sb, "Current Stack Index: %d\n\n", result.DebugCursorStackIndex)
 
-	for i, entry := range result.Stack {
+	for i, frame := range stack {
 		marker := "  "
-		if entry.StackPosition == result.DebugCursorStackIndex {
+		if frame.Active {
 			marker = "→ "
 		}
-		fmt.Fprintf(&sb, "%s[%d] %s::%s (line %d)\n",
-			marker, entry.StackPosition, entry.ProgramName, entry.EventName, entry.Line)
-		fmt.Fprintf(&sb, "      Type: %s, Include: %s\n", entry.EventType, entry.IncludeName)
-		if entry.SystemProgram {
+		fmt.Fprintf(&sb, "%s[%d] %s (line %d)\n", marker, frame.Index, frame.Program, frame.Line)
+		if frame.Include != "" && frame.Include != frame.Program {
+			fmt.Fprintf(&sb, "      Include: %s\n", frame.Include)
+		}
+		if frame.Procedure != "" {
+			fmt.Fprintf(&sb, "      Procedure: %s\n", frame.Procedure)
+		}
+		if frame.System {
 			sb.WriteString("      (system program)\n")
 		}
-		if i < len(result.Stack)-1 {
+		if i < len(stack)-1 {
 			sb.WriteString("\n")
 		}
 	}
@@ -216,66 +202,38 @@ func (s *Server) handleDebuggerGetStack(ctx context.Context, request mcp.CallToo
 }
 
 func (s *Server) handleDebuggerGetVariables(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Parse variable_ids from request
-	var variableIDs []string
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v", err)), nil
+	}
 
-	if ids, ok := request.GetArguments()["variable_ids"].([]interface{}); ok {
-		for _, id := range ids {
-			if s, ok := id.(string); ok {
-				variableIDs = append(variableIDs, s)
+	// Determine scope from variable_ids parameter for backward compatibility
+	scope := "system"
+	if ids, ok := request.GetArguments()["variable_ids"].([]interface{}); ok && len(ids) > 0 {
+		// If specific variables are requested, use "all" scope
+		if len(ids) > 0 {
+			if firstID, ok := ids[0].(string); ok && firstID != "@ROOT" {
+				scope = "all"
 			}
 		}
 	}
 
-	// Default to @ROOT if no IDs specified
-	if len(variableIDs) == 0 {
-		variableIDs = []string{"@ROOT"}
-	}
-
-	// If @ROOT is requested, use GetChildVariables for top-level vars
-	if len(variableIDs) == 1 && variableIDs[0] == "@ROOT" {
-		result, err := s.adtClient.DebuggerGetChildVariables(ctx, []string{"@ROOT", "@DATAAGING"})
-		if err != nil {
-			return newToolResultError(fmt.Sprintf("DebuggerGetVariables failed: %v", err)), nil
-		}
-
-		var sb strings.Builder
-		sb.WriteString("Variables:\n\n")
-
-		for _, v := range result.Variables {
-			fmt.Fprintf(&sb, "%s: %s = %s\n", v.Name, v.DeclaredTypeName, v.Value)
-			fmt.Fprintf(&sb, "  MetaType: %s, Kind: %s\n", v.MetaType, v.Kind)
-			if v.IsComplexType() {
-				fmt.Fprintf(&sb, "  (complex type - use variable ID '%s' to expand)\n", v.ID)
-			}
-		}
-
-		return mcp.NewToolResultText(sb.String()), nil
-	}
-
-	// Get specific variables
-	result, err := s.adtClient.DebuggerGetVariables(ctx, variableIDs)
+	variables, err := s.debugWSClient.GetVariables(ctx, scope)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("DebuggerGetVariables failed: %v", err)), nil
+	}
+
+	if len(variables) == 0 {
+		return mcp.NewToolResultText("No variables found."), nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString("Variables:\n\n")
 
-	for _, v := range result {
-		fmt.Fprintf(&sb, "%s: %s = %s\n", v.Name, v.DeclaredTypeName, v.Value)
-		fmt.Fprintf(&sb, "  ID: %s\n", v.ID)
-		fmt.Fprintf(&sb, "  MetaType: %s, Kind: %s\n", v.MetaType, v.Kind)
-		if v.HexValue != "" {
-			fmt.Fprintf(&sb, "  Hex: %s\n", v.HexValue)
+	for _, v := range variables {
+		fmt.Fprintf(&sb, "%s = %s\n", v.Name, v.Value)
+		if v.Scope != "" {
+			fmt.Fprintf(&sb, "  Scope: %s\n", v.Scope)
 		}
-		if v.TableLines > 0 {
-			fmt.Fprintf(&sb, "  Table Lines: %d\n", v.TableLines)
-		}
-		if v.IsComplexType() {
-			sb.WriteString("  (complex type - expandable)\n")
-		}
-		sb.WriteString("\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
