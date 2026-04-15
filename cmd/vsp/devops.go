@@ -539,13 +539,13 @@ func init() {
 	boundariesCmd.Flags().Bool("exact", false, "Check only the exact package, no subpackages")
 	rootCmd.AddCommand(boundariesCmd)
 
-	trBoundariesCmd.Flags().String("format", "text", "Output format: text, json, or html")
-	trBoundariesCmd.Flags().String("report", "", "Generate report file: html or filename.html")
+	trBoundariesCmd.Flags().String("format", "text", "Output format: text, json, md, or html")
+	trBoundariesCmd.Flags().String("report", "", "Generate report file: html, md, json, or filename.{html,md,json}")
 	trBoundariesCmd.Flags().Bool("details", false, "Show cross-package dependencies within the transport scope")
 	rootCmd.AddCommand(trBoundariesCmd)
 
-	crBoundariesCmd.Flags().String("format", "text", "Output format: text, json, or html")
-	crBoundariesCmd.Flags().String("report", "", "Generate report file: html or filename.html")
+	crBoundariesCmd.Flags().String("format", "text", "Output format: text, json, md, or html")
+	crBoundariesCmd.Flags().String("report", "", "Generate report file: html, md, json, or filename.{html,md,json}")
 	crBoundariesCmd.Flags().Bool("details", false, "Show cross-package dependencies within the CR scope")
 	rootCmd.AddCommand(crBoundariesCmd)
 
@@ -571,7 +571,7 @@ or more ABAP objects. Useful for debugging boundary analysis results.
 Examples:
   vsp what-package ZCL_MY_CLASS
   vsp what-package ZIF_LOGGER ZCX_S ZCL_BLOG
-  vsp what-package ZSCR_117_MIN_ALERT_CREATE_LOC`,
+  vsp what-package ZDEMO_117_MIN_ALERT_CREATE_LOC`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runWhatPackage,
 }
@@ -954,35 +954,16 @@ func runCRHistory(cmd *cobra.Command, args []string) error {
 }
 
 func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []string) (*graph.TransportBoundaryReport, error) {
-	// Step 1: Get objects — batch E071 queries (SAP 255-char IN clause limit)
-	type e071Row struct{ objType, objName string }
-	var allRows []e071Row
-
-	for start := 0; start < len(trList); start += 5 {
-		end := start + 5
-		if end > len(trList) {
-			end = len(trList)
-		}
-		batch := trList[start:end]
-		trQuoted := make([]string, len(batch))
-		for i, tr := range batch {
-			trQuoted[i] = "'" + strings.ToUpper(tr) + "'"
-		}
-		e071Query := fmt.Sprintf(
-			"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE PGMID = 'R3TR' AND TRKORR IN (%s)",
-			strings.Join(trQuoted, ","))
-		e071Result, err := client.RunQuery(ctx, e071Query, 2000)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "    WARN: E071 batch query failed: %v\n", err)
-			continue
-		}
-		for _, row := range e071Result.Rows {
-			objType := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"])))
-			objName := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])))
-			if objType != "" && objName != "" {
-				allRows = append(allRows, e071Row{objType, objName})
-			}
-		}
+	// Step 1: resolve parent dev objects for the TR list. The shared helper
+	// handles R3TR and LIMU uniformly, collapses LIMU subcomponents to their
+	// parent, and TADIR-filters deleted entries (so source-fetch does not
+	// 404 later on stale class references).
+	liveObjs, deletedRefs, err := collectCRDevObjects(ctx, client, trList)
+	if err != nil {
+		return nil, err
+	}
+	if len(deletedRefs) > 0 {
+		fmt.Fprintf(os.Stderr, "  (dropping %d deleted/stale object refs — see report)\n", len(deletedRefs))
 	}
 
 	trSet := make(map[string]bool)
@@ -994,9 +975,9 @@ func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []st
 	objectSet := make(map[objKey]bool)
 	scopeObjects := make(map[string]bool)
 
-	for _, row := range allRows {
-		objectSet[objKey{row.objType, row.objName}] = true
-		scopeObjects[graph.NodeID(row.objType, row.objName)] = true
+	for _, o := range liveObjs {
+		objectSet[objKey{o.ObjectType, o.ObjectName}] = true
+		scopeObjects[graph.NodeID(o.ObjectType, o.ObjectName)] = true
 	}
 
 	if len(objectSet) == 0 {
@@ -1013,13 +994,28 @@ func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []st
 		Objects:    scopeObjects,
 	}
 
-	// Step 2: Build dependency graph
+	// Step 2: Build dependency graph. Sort the object list so the analysis
+	// (and its stderr "Analyzing X..." trace) is stable across runs — makes
+	// the maxObjects=50 cap deterministic and diffing reports meaningful.
+	sortedObjs := make([]objKey, 0, len(objectSet))
+	for k := range objectSet {
+		sortedObjs = append(sortedObjs, k)
+	}
+	sort.Slice(sortedObjs, func(i, j int) bool {
+		if sortedObjs[i].objType != sortedObjs[j].objType {
+			return sortedObjs[i].objType < sortedObjs[j].objType
+		}
+		return sortedObjs[i].objName < sortedObjs[j].objName
+	})
+
 	g := graph.New()
 	maxObjects := 50
 	count := 0
+	truncated := false
 
-	for obj := range objectSet {
+	for _, obj := range sortedObjs {
 		if count >= maxObjects {
+			truncated = true
 			break
 		}
 		nodeID := graph.NodeID(obj.objType, obj.objName)
@@ -1030,7 +1026,16 @@ func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []st
 		}
 
 		fmt.Fprintf(os.Stderr, "  Analyzing %s %s...\n", obj.objType, obj.objName)
-		source, err := client.GetSource(ctx, obj.objType, obj.objName, nil)
+		var source string
+		var err error
+		if obj.objType == "FUGR" {
+			// GetSource for FUGR returns JSON metadata (function module list), which has
+			// no ABAP statements and yields zero dependencies. For accurate graph analysis
+			// we need the actual source: TOP include + all fmodules + all sub-includes.
+			source, err = client.GetFunctionGroupAllSources(ctx, obj.objName)
+		} else {
+			source, err = client.GetSource(ctx, obj.objType, obj.objName, nil)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "    WARN: %s %s: %v\n", obj.objType, obj.objName, err)
 			continue
@@ -1051,6 +1056,12 @@ func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []st
 
 	// Resolve packages
 	resolvePackagesCLI(ctx, client, g)
+
+	if truncated {
+		fmt.Fprintf(os.Stderr,
+			"  WARN: analysis truncated at %d objects (CR has %d source-bearing objects). Deps for the remaining %d are not counted — boundary totals are lower bounds, not complete.\n",
+			maxObjects, len(sortedObjs), len(sortedObjs)-maxObjects)
+	}
 
 	return graph.AnalyzeTransportBoundaries(g, scope), nil
 }
@@ -1106,17 +1117,24 @@ func outputTRBoundaries(cmd *cobra.Command, report *graph.TransportBoundaryRepor
 	reportFlag, _ := cmd.Flags().GetString("report")
 	details, _ := cmd.Flags().GetBool("details")
 
-	// --report: resolve format and filename
+	// --report: resolve format and filename. Accepts three shapes:
+	//   - explicit format name ("html" / "md" / "json") — filename is
+	//     auto-generated from the scope identifier
+	//   - filename ending in a known extension — format inferred
+	//   - anything else → explicit error listing the accepted forms
 	if reportFlag != "" {
-		if strings.HasSuffix(reportFlag, ".html") {
+		switch {
+		case strings.HasSuffix(reportFlag, ".html"):
 			format = "html"
-		} else if strings.HasSuffix(reportFlag, ".json") {
+		case strings.HasSuffix(reportFlag, ".md"):
+			format = "md"
+		case strings.HasSuffix(reportFlag, ".json"):
 			format = "json"
-		} else if reportFlag == "html" || reportFlag == "json" {
+		case reportFlag == "html" || reportFlag == "md" || reportFlag == "json":
 			format = reportFlag
-			reportFlag = strings.ReplaceAll(report.Scope, ":", "_") + "." + format
-		} else {
-			return fmt.Errorf("unsupported report format %q (want html or json)", reportFlag)
+			reportFlag = sanitizeScopeFilename(report.Scope) + "." + format
+		default:
+			return fmt.Errorf("unsupported --report value %q (want html, md, json, or filename.{html,md,json})", reportFlag)
 		}
 		f, err := os.Create(reportFlag)
 		if err != nil {
@@ -1134,6 +1152,8 @@ func outputTRBoundaries(cmd *cobra.Command, report *graph.TransportBoundaryRepor
 		fmt.Println(string(data))
 	case "html":
 		printTRBoundariesHTML(report, details)
+	case "md":
+		printTRBoundariesMarkdown(report, details)
 	default:
 		printTRBoundariesText(report, details)
 	}
@@ -1260,6 +1280,95 @@ func printTRBoundariesHTML(report *graph.TransportBoundaryReport, details bool) 
 	}
 
 	fmt.Println("</body></html>")
+}
+
+// sanitizeScopeFilename turns a boundary-report scope label like
+// "CR:CR-EXAMPLE (Z_CR_ATTR)" into a filesystem-safe base name:
+// keep only [A-Za-z0-9_-], collapse everything else into underscores,
+// and trim trailing underscores so we do not emit ugly `report_.md`.
+func sanitizeScopeFilename(scope string) string {
+	var b strings.Builder
+	b.Grow(len(scope))
+	for _, r := range scope {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "report"
+	}
+	// Collapse any run of underscores into a single one so multi-
+	// character punctuation sequences don't expand into long dashes.
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+	return out
+}
+
+// printTRBoundariesMarkdown renders a cr-boundaries / tr-boundaries
+// report as GitHub-flavoured Markdown. Same three sections as the
+// text output (Summary → Missing → Dynamic) plus an optional Cross-
+// Package section under --details. Emoji-free on purpose so grep and
+// automated log parsers stay happy.
+func printTRBoundariesMarkdown(report *graph.TransportBoundaryReport, details bool) {
+	status := "SELF-CONSISTENT"
+	if !report.Summary.SelfConsistent {
+		status = "INCOMPLETE"
+	}
+	fmt.Printf("# Transport Boundaries: %s\n\n", report.Scope)
+	fmt.Printf("**Status:** %s\n\n", status)
+
+	fmt.Printf("## Summary\n\n")
+	fmt.Println("| Metric | Value |")
+	fmt.Println("|---|---|")
+	fmt.Printf("| Objects in scope | %d |\n", report.ObjectCount)
+	fmt.Printf("| Total dependencies | %d |\n", report.Summary.TotalDeps)
+	fmt.Printf("| In-scope (same package) | %d |\n", report.Summary.InScopeSamePkg)
+	fmt.Printf("| In-scope (cross-package) | %d |\n", report.Summary.InScopeCrossPkg)
+	fmt.Printf("| Missing | %d |\n", report.Summary.Missing)
+	fmt.Printf("| Standard SAP refs | %d |\n", report.Summary.Standard)
+	fmt.Printf("| Dynamic (unresolved) | %d |\n", report.Summary.Dynamic)
+	fmt.Println()
+
+	if len(report.Missing) > 0 {
+		fmt.Printf("## MISSING — custom objects not in transport\n\n")
+		fmt.Println("| Source | → | Target | Edge | Package |")
+		fmt.Println("|---|---|---|---|---|")
+		for _, e := range report.Missing {
+			fmt.Printf("| `%s %s` | → | `%s %s` | %s | `%s` |\n",
+				e.SourceType, e.SourceName,
+				e.TargetType, e.TargetName,
+				e.EdgeKind, e.TargetPackage)
+		}
+		fmt.Println()
+	}
+
+	if len(report.Dynamic) > 0 {
+		fmt.Printf("## DYNAMIC — unresolved calls\n\n")
+		for _, e := range report.Dynamic {
+			fmt.Printf("- `%s %s` → %s\n", e.SourceType, e.SourceName, e.RefDetail)
+		}
+		fmt.Println()
+	}
+
+	if details && len(report.CrossPackage) > 0 {
+		fmt.Printf("## CROSS-PACKAGE — in-scope, different package\n\n")
+		currentPkg := ""
+		for _, e := range report.CrossPackage {
+			if e.TargetPackage != currentPkg {
+				currentPkg = e.TargetPackage
+				fmt.Printf("\n### `%s`\n\n", currentPkg)
+			}
+			fmt.Printf("- `%s %s` (`%s`) → `%s %s` via %s\n",
+				e.SourceType, e.SourceName, e.SourcePackage,
+				e.TargetType, e.TargetName, e.EdgeKind)
+		}
+		fmt.Println()
+	}
 }
 
 func runSourceWrite(cmd *cobra.Command, args []string) error {

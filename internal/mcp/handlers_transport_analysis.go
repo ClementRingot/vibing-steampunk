@@ -314,7 +314,15 @@ func (s *Server) analyzeTransportBoundaries(ctx context.Context, trList []string
 			continue
 		}
 
-		source, err := s.adtClient.GetSource(ctx, obj.objType, obj.objName, nil)
+		var source string
+		var err error
+		if obj.objType == "FUGR" {
+			// FUGR via GetSource returns only JSON metadata; use the dedicated helper
+			// that concatenates top include + all fmodules + sub-includes for real deps.
+			source, err = s.adtClient.GetFunctionGroupAllSources(ctx, obj.objName)
+		} else {
+			source, err = s.adtClient.GetSource(ctx, obj.objType, obj.objName, nil)
+		}
 		if err != nil {
 			continue
 		}

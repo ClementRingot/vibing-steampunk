@@ -10,7 +10,7 @@
 ### Changelog & Changes — E07T Bug Fix + CR Correlation
 - `changelog.go`: AS4TEXT lives in E07T, not E070 — separate query added
 - `changes.go`: new command grouping transports by CTS attribute (E070A)
-- Validated on SAP a4h-110-adt: SAPNOTE attribute, ZCUSTOM_DEVELOPMENT package
+- Validated on SAP devsys-adt: SAPNOTE attribute, ZCUSTOM_DEVELOPMENT package
 
 ### Health Command — Major Overhaul
 - **Test discovery fixed**: was filtering by class name containing "TEST" — wrong. Now uses SAP's native unit test runner via `/sap/bc/adt/packages/<name>` URI

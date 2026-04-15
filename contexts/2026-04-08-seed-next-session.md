@@ -23,7 +23,7 @@ Open Issues: 8 (all backlog)
 Branch: main
 Latest release: v2.38.1
 Stars: 257 (0x101)
-SAP test system: a4h-110-adt (192.168.8.110:50000, user AVINOGRADOVA)
+SAP test system: devsys-adt (dev.example.local:50000, user TESTUSER)
 Test hierarchy: $ZHIRTEST_00/001/010/101 with 7 objects
 ```
 
@@ -68,11 +68,11 @@ Integration with `vsp context` command.
 ## SAP Smoke Test Commands
 
 ```bash
-./build/vsp -s a4h-110-adt search "ZCL_HIRT*" --type CLAS --max 5
-./build/vsp -s a4h-110-adt query T000 --top 3
-./build/vsp -s a4h-110-adt slim '$ZHIRTEST' --level methods
-./build/vsp -s a4h-110-adt health --package '$ZHIRTEST'
-./build/vsp -s a4h-110-adt boundaries '$ZHIRTEST'
-./build/vsp -s a4h-110-adt changelog '$ZHIRTEST' --include-subpackages --top 5
-./build/vsp -s a4h-110-adt api-surface '$ZHIRTEST' --include-subpackages
+./build/vsp -s devsys-adt search "ZCL_HIRT*" --type CLAS --max 5
+./build/vsp -s devsys-adt query T000 --top 3
+./build/vsp -s devsys-adt slim '$ZHIRTEST' --level methods
+./build/vsp -s devsys-adt health --package '$ZHIRTEST'
+./build/vsp -s devsys-adt boundaries '$ZHIRTEST'
+./build/vsp -s devsys-adt changelog '$ZHIRTEST' --include-subpackages --top 5
+./build/vsp -s devsys-adt api-surface '$ZHIRTEST' --include-subpackages
 ```

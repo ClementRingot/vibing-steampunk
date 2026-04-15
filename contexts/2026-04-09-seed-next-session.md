@@ -110,15 +110,15 @@ Transitive behavior = derived report, not first-class topology.
 
 | System | URL | Notes |
 |--------|-----|-------|
-| a4h-110-adt | 192.168.8.110:50000 | Test system, user AVINOGRADOVA, `$ZHIRTEST` hierarchy |
+| devsys-adt | dev.example.local:50000 | Test system, user TESTUSER, `$ZHIRTEST` hierarchy |
 | a4h (desude) | a4h.desude.su:50000 | Alice's dev system, `$ZLLM` package |
-| muabap | muabap.ydns.eu | Marcello's trial (SAP 2023), user oisee — install bug reproduction target |
+| trialsys | trialsys.example | External reporter's SAP 2023 trial — install bug reproduction target |
 
 ## Smoke Tests
 
 ```bash
-vsp -s a4h-110-adt search "ZCL_HIRT*" --type CLAS --max 5
-vsp -s a4h-110-adt health --package '$ZHIRTEST'
-vsp -s a4h-110-adt boundaries '$ZHIRTEST'
-vsp -s a4h-110-adt changelog '$ZHIRTEST' --include-subpackages --top 5
+vsp -s devsys-adt search "ZCL_HIRT*" --type CLAS --max 5
+vsp -s devsys-adt health --package '$ZHIRTEST'
+vsp -s devsys-adt boundaries '$ZHIRTEST'
+vsp -s devsys-adt changelog '$ZHIRTEST' --include-subpackages --top 5
 ```

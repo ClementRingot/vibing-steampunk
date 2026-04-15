@@ -31,6 +31,7 @@ func init() {
 
 // systemParams holds resolved system parameters.
 type systemParams struct {
+	Name         string // resolved system name ("" when using bare SAP_* env vars)
 	URL          string
 	User         string
 	Password     string
@@ -93,6 +94,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		}
 
 		return &systemParams{
+			Name:               effectiveName,
 			URL:                sys.URL,
 			User:               sys.User,
 			Password:           sys.Password,

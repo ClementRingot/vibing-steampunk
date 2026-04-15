@@ -129,13 +129,14 @@ type PackageObject struct {
 }
 
 // FunctionGroup represents a function group structure.
+// Root element is <group:abapFunctionGroup> in ADT v2/v3 responses (local name "abapFunctionGroup").
 type FunctionGroup struct {
-	XMLName   xml.Name `xml:"group"`
-	URI       string   `xml:"uri,attr"`
-	Type      string   `xml:"type,attr"`
-	Name      string   `xml:"name,attr"`
-	Version   string   `xml:"version,attr,omitempty"`
-	Links     []Link   `xml:"link"`
+	XMLName   xml.Name         `xml:"abapFunctionGroup"`
+	URI       string           `xml:"uri,attr"`
+	Type      string           `xml:"type,attr"`
+	Name      string           `xml:"name,attr"`
+	Version   string           `xml:"version,attr,omitempty"`
+	Links     []Link           `xml:"link"`
 	Functions []FunctionModule `xml:"functionModule,omitempty"`
 }
 

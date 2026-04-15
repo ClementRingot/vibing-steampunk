@@ -1,7 +1,7 @@
 # Bug Report: Install Silent Failure + Lock Errors on Trial Systems
 
 **Date:** 2026-04-09
-**Reporter:** Marcello Urbani (SAP 2023 Trial, muabap.ydns.eu)
+**Reporter:** Marcello Urbani (SAP 2023 Trial, trialsys.example)
 **Severity:** HIGH — installer lies about success
 
 ---
@@ -113,7 +113,7 @@ But the global default is stateless. If a trial system requires the CSRF token t
 
 5. **Add install smoke test** — after deployment, verify each object exists via `SearchObject`
 6. **Recommend abapGit path** — for trial systems, `vsp install abapgit` + import via abapGit may be more reliable than direct object creation
-7. **Test on a4h-110-adt** — reproduce the install flow and check result.Success values
+7. **Test on devsys-adt** — reproduce the install flow and check result.Success values
 
 ### Medium-term
 
@@ -125,16 +125,16 @@ But the global default is stateless. If a trial system requires the CSRF token t
 ## Test Plan
 
 ```bash
-# 1. Test install on a4h-110-adt
-vsp -s a4h-110-adt install zadt-vsp --package '$ZTEST_INSTALL'
+# 1. Test install on devsys-adt
+vsp -s devsys-adt install zadt-vsp --package '$ZTEST_INSTALL'
 
 # 2. Verify objects exist
-vsp -s a4h-110-adt search "ZCL_VSP*" --type CLAS --max 10
-vsp -s a4h-110-adt search "ZIF_VSP*" --type INTF --max 10
+vsp -s devsys-adt search "ZCL_VSP*" --type CLAS --max 10
+vsp -s devsys-adt search "ZIF_VSP*" --type INTF --max 10
 
 # 3. Test edit flow
-vsp -s a4h-110-adt source CLAS ZCL_HIRT_API  # read (should work)
-vsp -s a4h-110-adt source edit CLAS ZCL_HIRT_API --old "PUBLIC" --new "PUBLIC"  # no-op edit
+vsp -s devsys-adt source CLAS ZCL_HIRT_API  # read (should work)
+vsp -s devsys-adt source edit CLAS ZCL_HIRT_API --old "PUBLIC" --new "PUBLIC"  # no-op edit
 
 # 4. Clean up test package
 # (manual via SE80 or leave for next test)
