@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.42.0] - 2026-04-15
+### Bug Fixes
+
+- Add upsert fallback for load-balanced SAP systems ([`0d211f4`](https://github.com/oisee/vibing-steampunk/commit/0d211f49f7eadfcbb1060a6d30b3bdfc0a9ad3b6))
+- Handle AlreadyExists in writeSourceCreate for load-balanced SAP ([`0672c66`](https://github.com/oisee/vibing-steampunk/commit/0672c662d355818374460c9a4d6e0041dc872d98))
+- Use lockWithRetry in WriteClass for load-balanced SAP ([`26836c1`](https://github.com/oisee/vibing-steampunk/commit/26836c1e5f05cfac33e9927960c0ec154b361357))
+- Robust InstallZADTVSP on load-balanced SAP systems ([`c45921e`](https://github.com/oisee/vibing-steampunk/commit/c45921e63bbda6089707cd2dfb99c799fe19ee06))
+
+
+
 ## [2.41.2] - 2026-04-15
 ### Bug Fixes
 
