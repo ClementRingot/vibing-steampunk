@@ -169,6 +169,17 @@ type WriteSourceResult struct {
 	Message       string                     `json:"message,omitempty"`
 }
 
+// isAlreadyExistsError checks if an error indicates the object already exists.
+// This happens on load-balanced SAP systems when the existence check hits one backend
+// but CreateObject hits another backend that already has the object.
+func isAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "AlreadyExists") || strings.Contains(msg, "already exist")
+}
+
 // lockWithRetry attempts to lock an object, retrying on 404 errors that can occur
 // on load-balanced SAP systems when the Lock request hits a different backend than
 // the preceding CreateObject. Retries up to 8 times with exponential backoff (~60s total).
@@ -388,7 +399,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 				PackageName: opts.Package,
 				Transport:   opts.Transport,
 			})
-			if err != nil {
+			if err != nil && !isAlreadyExistsError(err) {
 				result.Message = fmt.Sprintf("Failed to create class: %v", err)
 				return result, nil
 			}
@@ -419,7 +430,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 			PackageName: opts.Package,
 			Transport:   opts.Transport,
 		})
-		if err != nil {
+		if err != nil && !isAlreadyExistsError(err) {
 			result.Message = fmt.Sprintf("Failed to create interface: %v", err)
 			return result, nil
 		}
@@ -520,7 +531,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 			createOpts.Source = source // BDEF requires source embedded in creation request
 		}
 		err := c.CreateObject(ctx, createOpts)
-		if err != nil {
+		if err != nil && !isAlreadyExistsError(err) {
 			result.Message = fmt.Sprintf("Failed to create %s: %v", objectType, err)
 			return result, nil
 		}
