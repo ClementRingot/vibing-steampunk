@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.41.2] - 2026-04-15
+### Bug Fixes
+
+- Increase lockWithRetry to 9 attempts with ~60s total backoff ([`fc3fa46`](https://github.com/oisee/vibing-steampunk/commit/fc3fa4619a1a496e5e6833b222b0921f08c20571))
+
+
+
 ## [2.41.1] - 2026-04-15
 ### Bug Fixes
 
