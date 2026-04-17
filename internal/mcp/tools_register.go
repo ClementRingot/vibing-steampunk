@@ -2427,7 +2427,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				"SUPPORTED TARGET TYPES AND THEIR REQUIRED PARAMETERS:\n"+
 				"• data_element: Returns short_field_label, medium_field_label, long_field_label, heading_field_label\n"+
 				"• domain: Requires 'fixed_value'. Returns fixed_value_description\n"+
-				"• data_definition (CDS/DDLS): Requires 'field_name'. Returns endusertext_label, endusertext_quickinfo\n"+
+				"• data_definition (CDS/DDLS): Optional 'field_name'. Without field_name: returns entity-level texts (endusertext_label, ui_headerinfo_description_label, ui_headerinfo_title_label, ui_headerinfo_typename, ui_headerinfo_typenameplural). With field_name: returns field-level texts (endusertext_label, endusertext_quickinfo)\n"+
 				"• metadata_extension (DDLX): Requires 'field_name'. Optional 'position' (default 1). "+
 				"Returns endusertext_label, endusertext_quickinfo, ui_lineitem_label, ui_identification_label, "+
 				"consumption_dynamiclabel_label, ui_fieldgroup_label, ui_fieldgroup_grouplabel, ui_facet_label, consumption_valuehelpdef_label\n"+
@@ -2448,7 +2448,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				mcp.Description("SAP language code (E=English, D=German, F=French, etc.)"),
 			),
 			mcp.WithString("field_name",
-				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate). Required for these types."),
+				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate). Required for metadata_extension. Optional for data_definition: omit to read entity-level texts, provide to read field-level texts."),
 			),
 			mcp.WithString("fixed_value",
 				mcp.Description("Fixed value lower limit for domain targets (e.g., 'DE', '01'). Required for domain type."),
@@ -2480,7 +2480,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				"SUPPORTED TARGET TYPES AND VALID ATTRIBUTES FOR 'texts' ARRAY:\n"+
 				"• data_element: short_field_label, medium_field_label, long_field_label, heading_field_label\n"+
 				"• domain: Requires 'fixed_value'. Attribute: fixed_value_description\n"+
-				"• data_definition (CDS/DDLS): Requires 'field_name'. Attributes: endusertext_label, endusertext_quickinfo\n"+
+				"• data_definition (CDS/DDLS): Optional 'field_name'. Without field_name: writes entity-level texts (endusertext_label, ui_headerinfo_description_label, ui_headerinfo_title_label, ui_headerinfo_typename, ui_headerinfo_typenameplural). With field_name: writes field-level texts (endusertext_label, endusertext_quickinfo)\n"+
 				"• metadata_extension (DDLX): Requires 'field_name'. Optional 'position' (default 1). "+
 				"Attributes: endusertext_label, endusertext_quickinfo, ui_lineitem_label, ui_identification_label, "+
 				"consumption_dynamiclabel_label, ui_fieldgroup_label, ui_fieldgroup_grouplabel, ui_facet_label, consumption_valuehelpdef_label\n"+
@@ -2509,7 +2509,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				mcp.Description(`JSON array of attribute/value pairs. Use attributes matching the target_type (see tool description). Example for data_element: [{"attribute":"short_field_label","value":"Vorname"},{"attribute":"long_field_label","value":"Vorname des Mitarbeiters"}]. Example for domain: [{"attribute":"fixed_value_description","value":"Deutschland"}]`),
 			),
 			mcp.WithString("field_name",
-				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate). Required for these types."),
+				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate). Required for metadata_extension. Optional for data_definition: omit to write entity-level texts, provide to write field-level texts."),
 			),
 			mcp.WithString("fixed_value",
 				mcp.Description("Fixed value lower limit for domain targets (e.g., 'DE'). Required for domain type."),
@@ -2588,7 +2588,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				"SUPPORTED TARGET TYPES:\n"+
 				"• data_element: Lists all 4 label attributes (short/medium/long/heading)\n"+
 				"• domain: Lists all fixed values with their descriptions\n"+
-				"• data_definition (CDS/DDLS): Lists all fields with endusertext_label and endusertext_quickinfo\n"+
+				"• data_definition (CDS/DDLS): Lists entity-level description (endusertext_label + UI.headerInfo texts) and all fields with endusertext_label and endusertext_quickinfo\n"+
 				"• metadata_extension (DDLX): Lists all fields with all 9 annotation text attributes\n"+
 				"• message_class: Lists all messages with message_short_text\n"+
 				"• text_pool: Lists all text symbols. Use 'text_pool_owner_type' for function_group (default: class)\n"+
