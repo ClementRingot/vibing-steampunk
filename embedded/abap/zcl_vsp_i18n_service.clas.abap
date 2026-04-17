@@ -913,12 +913,36 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
     ENDIF.
 
     TRANSLATE lv_object_name TO UPPER CASE.
-    IF lv_language IS INITIAL. lv_language = 'E'. ENDIF.
+    IF lv_language IS INITIAL. lv_language = sy-langu. ENDIF.
     TRANSLATE lv_language TO UPPER CASE.
 
     TRY.
         DATA(lo_language) = xco_cp=>language( CONV spras( lv_language ) ).
-        DATA(lo_orig_language) = xco_cp=>language( 'E' ).
+        " Determine original language from TADIR (not hardcoded to English)
+        DATA lv_orig_spras TYPE spras.
+        DATA lv_tadir_type TYPE trobjtype.
+        CASE lv_target_type.
+          WHEN 'data_element'.       lv_tadir_type = 'DTEL'.
+          WHEN 'domain'.             lv_tadir_type = 'DOMA'.
+          WHEN 'data_definition'.    lv_tadir_type = 'DDLS'.
+          WHEN 'metadata_extension'. lv_tadir_type = 'DDLX'.
+          WHEN 'message_class'.      lv_tadir_type = 'MSAG'.
+          WHEN 'text_pool'.
+            IF lv_pool_type = 'function_group'.
+              lv_tadir_type = 'FUGR'.
+            ELSE.
+              lv_tadir_type = 'CLAS'.
+            ENDIF.
+        ENDCASE.
+        IF lv_tadir_type IS NOT INITIAL.
+          SELECT SINGLE masterlang FROM tadir
+            WHERE pgmid = 'R3TR' AND object = @lv_tadir_type AND obj_name = @lv_object_name
+            INTO @lv_orig_spras.
+          IF sy-subrc <> 0. lv_orig_spras = sy-langu. ENDIF.
+        ELSE.
+          lv_orig_spras = sy-langu.
+        ENDIF.
+        DATA(lo_orig_language) = xco_cp=>language( lv_orig_spras ).
         DATA lv_texts_json TYPE string.
 
         CASE lv_target_type.
@@ -1057,7 +1081,7 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 ENDTRY.
                 IF lv_lt_ov IS NOT INITIAL.
                   DATA(lv_lt_fv) = ||.
-                  IF lv_language <> 'E'.
+                  IF lv_language <> lv_orig_spras.
                     TRY.
                         DATA(lo_lt_fr2) = lo_lt_fld->get_translation( io_language = lo_language it_text_attributes = lt_lt_fa ).
                         IF lo_lt_fr2->texts IS NOT INITIAL. lv_lt_fv = lo_lt_fr2->texts[ 1 ]->get_string_value( ). ENDIF.
@@ -1109,7 +1133,7 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                   CATCH cx_root. CLEAR lv_lt_dd_ov.
                 ENDTRY.
                 IF lv_lt_dd_ov IS NOT INITIAL.
-                  IF lv_language <> 'E'.
+                  IF lv_language <> lv_orig_spras.
                     TRY.
                         DATA(lo_lt_dd_mr2) = lo_lt_dd_me_tgt->get_translation( io_language = lo_language it_text_attributes = lt_lt_dd_ma ).
                         IF lo_lt_dd_mr2->texts IS NOT INITIAL. lv_lt_dd_mv = lo_lt_dd_mr2->texts[ 1 ]->get_string_value( ). ENDIF.
@@ -1147,7 +1171,7 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                     CATCH cx_root. CLEAR lv_lt_dd_pov.
                   ENDTRY.
                   IF lv_lt_dd_pov IS NOT INITIAL.
-                    IF lv_language <> 'E'.
+                    IF lv_language <> lv_orig_spras.
                       TRY.
                           DATA(lo_lt_dd_pr2) = lo_lt_dd_me_p->get_translation( io_language = lo_language it_text_attributes = lt_lt_dd_ma ).
                           IF lo_lt_dd_pr2->texts IS NOT INITIAL. lv_lt_dd_pv = lo_lt_dd_pr2->texts[ 1 ]->get_string_value( ). ENDIF.
@@ -1243,7 +1267,7 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 ENDTRY.
                 IF lv_lt_mov IS NOT INITIAL.
                   DATA(lv_lt_mv) = ||.
-                  IF lv_language <> 'E'.
+                  IF lv_language <> lv_orig_spras.
                     TRY.
                         DATA(lo_lt_mr2) = lo_lt_me_tgt->get_translation( io_language = lo_language it_text_attributes = lt_lt_ma ).
                         IF lo_lt_mr2->texts IS NOT INITIAL. lv_lt_mv = lo_lt_mr2->texts[ 1 ]->get_string_value( ). ENDIF.
@@ -1288,7 +1312,7 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                       CLEAR lv_lt_pov.
                   ENDTRY.
                   IF lv_lt_pov IS NOT INITIAL.
-                    IF lv_language <> 'E'.
+                    IF lv_language <> lv_orig_spras.
                       TRY.
                           DATA(lo_lt_pr2) = lo_lt_me_p->get_translation( io_language = lo_language it_text_attributes = lt_lt_ma ).
                           IF lo_lt_pr2->texts IS NOT INITIAL. lv_lt_pv = lo_lt_pr2->texts[ 1 ]->get_string_value( ). ENDIF.
