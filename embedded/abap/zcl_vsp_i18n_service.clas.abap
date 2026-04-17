@@ -75,6 +75,18 @@ CLASS zcl_vsp_i18n_service DEFINITION
                 iv_value       TYPE string
       RETURNING VALUE(rv_json) TYPE string.
 
+    "! Map a positional ME i18n attribute name to its CDS annotation name
+    METHODS map_me_attr_to_anno
+      IMPORTING iv_attr_name  TYPE string
+      RETURNING VALUE(rv_anno) TYPE string.
+
+    "! Count annotation array entries for a field in DDLX source
+    METHODS count_ddlx_positions
+      IMPORTING iv_source      TYPE string
+                iv_field_name  TYPE string
+                iv_anno_name   TYPE string
+      RETURNING VALUE(rv_count) TYPE i.
+
 ENDCLASS.
 
 
@@ -1171,6 +1183,11 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             APPEND 'ui_fieldgroup_grouplabel'       TO lt_lt_dd_me_pos_attrs.
             APPEND 'ui_facet_label'                 TO lt_lt_dd_me_pos_attrs.
             APPEND 'consumption_valuehelpdef_label' TO lt_lt_dd_me_pos_attrs.
+            " Read DDLX source once for position counting
+            DATA(lv_dd_ddlx_src) = ||.
+            SELECT SINGLE source FROM ddlxsrc_src
+              WHERE ddlxname = @lv_object_name AND version = 'A'
+              INTO @lv_dd_ddlx_src.
             LOOP AT lt_dd_field_names INTO DATA(lv_lt_dd_mfn).
               DATA lo_lt_dd_mta TYPE REF TO cl_xco_me_fld_text_attribute.
               " Non-positional ME attributes
@@ -1210,10 +1227,15 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                   ) ) ).
                 ENDIF.
               ENDLOOP.
-              " Positional ME attributes - scan positions 1..10
+              " Positional ME attributes - use DDLX source to determine position count per field
               LOOP AT lt_lt_dd_me_pos_attrs INTO DATA(lv_lt_dd_pan).
+                DATA(lv_lt_dd_max_pos) = count_ddlx_positions(
+                  iv_source     = lv_dd_ddlx_src
+                  iv_field_name = lv_lt_dd_mfn
+                  iv_anno_name  = map_me_attr_to_anno( lv_lt_dd_pan )
+                ).
                 DATA(lv_lt_dd_pos) = 1.
-                WHILE lv_lt_dd_pos <= 10.
+                WHILE lv_lt_dd_pos <= lv_lt_dd_max_pos.
                   lo_lt_dd_mta = get_me_field_attr( iv_name = lv_lt_dd_pan iv_position = lv_lt_dd_pos ).
                   IF lo_lt_dd_mta IS NOT BOUND. lv_lt_dd_pos = lv_lt_dd_pos + 1. CONTINUE. ENDIF.
                   CLEAR lt_lt_dd_ma.
@@ -1266,6 +1288,11 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             APPEND 'ui_fieldgroup_grouplabel'       TO lt_lt_me_pos_attrs.
             APPEND 'ui_facet_label'                 TO lt_lt_me_pos_attrs.
             APPEND 'consumption_valuehelpdef_label' TO lt_lt_me_pos_attrs.
+            " Read DDLX source once for position counting
+            DATA(lv_me_ddlx_src) = ||.
+            SELECT SINGLE source FROM ddlxsrc_src
+              WHERE ddlxname = @lv_object_name AND version = 'A'
+              INTO @lv_me_ddlx_src.
             LOOP AT lt_me_field_names INTO DATA(lv_lt_mfn).
               DATA lo_lt_mta TYPE REF TO cl_xco_me_fld_text_attribute.
               " Non-positional attributes (only position 1)
@@ -1307,12 +1334,15 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                     ) ) ).
                 ENDIF.
               ENDLOOP.
-              " Positional attributes - scan positions 1..10 for action/facet labels
-              " Position 1 may be empty (e.g. @UI.lineItem with no label)
-              " while higher positions have action labels (#FOR_ACTION)
+              " Positional attributes - use DDLX source to determine position count per field
               LOOP AT lt_lt_me_pos_attrs INTO DATA(lv_lt_pan).
+                DATA(lv_lt_max_pos) = count_ddlx_positions(
+                  iv_source     = lv_me_ddlx_src
+                  iv_field_name = lv_lt_mfn
+                  iv_anno_name  = map_me_attr_to_anno( lv_lt_pan )
+                ).
                 DATA(lv_lt_pos) = 1.
-                WHILE lv_lt_pos <= 10.
+                WHILE lv_lt_pos <= lv_lt_max_pos.
                   lo_lt_mta = get_me_field_attr( iv_name = lv_lt_pan iv_position = lv_lt_pos ).
                   IF lo_lt_mta IS NOT BOUND.
                     lv_lt_pos = lv_lt_pos + 1.
@@ -1609,6 +1639,64 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
       ( zcl_vsp_utils=>json_str( iv_key = 'attribute'  iv_value = iv_attribute ) )
       ( zcl_vsp_utils=>json_str( iv_key = 'value'      iv_value = iv_value ) )
     ) ) ).
+  ENDMETHOD.
+
+  METHOD map_me_attr_to_anno.
+    CASE iv_attr_name.
+      WHEN 'ui_lineitem_label'.              rv_anno = 'UI.LINEITEM'.
+      WHEN 'ui_identification_label'.        rv_anno = 'UI.IDENTIFICATION'.
+      WHEN 'consumption_dynamiclabel_label'. rv_anno = 'CONSUMPTION.DYNAMICLABEL'.
+      WHEN 'ui_fieldgroup_label'.            rv_anno = 'UI.FIELDGROUP'.
+      WHEN 'ui_fieldgroup_grouplabel'.       rv_anno = 'UI.FIELDGROUP'.
+      WHEN 'ui_facet_label'.                 rv_anno = 'UI.FACET'.
+      WHEN 'consumption_valuehelpdef_label'. rv_anno = 'CONSUMPTION.VALUEHELPDEFINITION'.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD count_ddlx_positions.
+    IF iv_source IS INITIAL OR iv_anno_name IS INITIAL.
+      rv_count = 0. RETURN.
+    ENDIF.
+    " Find field marker: "FieldName;" (case-insensitive)
+    DATA(lv_field_pat) = iv_field_name && ';'.
+    FIND lv_field_pat IN iv_source MATCH OFFSET DATA(lv_fld_off) IGNORING CASE.
+    IF sy-subrc <> 0. rv_count = 0. RETURN. ENDIF.
+    " Get annotation block before this field (from start or previous ";")
+    DATA(lv_block) = iv_source(lv_fld_off).
+    " Find the last occurrence of ";" before this field to isolate its annotations
+    DATA(lv_prev_end) = 0.
+    DATA(lv_search_from) = 0.
+    DO.
+      FIND ';' IN SECTION OFFSET lv_search_from OF lv_block MATCH OFFSET DATA(lv_sc_off).
+      IF sy-subrc <> 0. EXIT. ENDIF.
+      lv_prev_end = lv_sc_off + 1.
+      lv_search_from = lv_sc_off + 1.
+    ENDDO.
+    DATA(lv_field_block) = lv_block+lv_prev_end.
+    " Find the annotation (e.g., "@UI.lineItem:")
+    DATA(lv_anno_pat) = '@' && iv_anno_name && ':'.
+    FIND lv_anno_pat IN lv_field_block MATCH OFFSET DATA(lv_anno_off) IGNORING CASE.
+    IF sy-subrc <> 0. rv_count = 0. RETURN. ENDIF.
+    " From the annotation, find the array start "["
+    DATA(lv_after) = lv_field_block+lv_anno_off.
+    FIND '[' IN lv_after MATCH OFFSET DATA(lv_arr_off).
+    IF sy-subrc <> 0. rv_count = 1. RETURN. ENDIF. " scalar = 1 position
+    " Count top-level "{" inside the [...] array
+    DATA(lv_depth) = 0.
+    DATA(lv_idx) = lv_arr_off + 1.
+    DATA(lv_len) = strlen( lv_after ).
+    WHILE lv_idx < lv_len.
+      DATA(lv_ch) = lv_after+lv_idx(1).
+      CASE lv_ch.
+        WHEN ']'.
+          IF lv_depth = 0. EXIT. ENDIF. " end of outer array
+          lv_depth = lv_depth - 1.
+        WHEN '['. lv_depth = lv_depth + 1.
+        WHEN '{'.
+          IF lv_depth = 0. rv_count = rv_count + 1. ENDIF.
+      ENDCASE.
+      lv_idx = lv_idx + 1.
+    ENDWHILE.
   ENDMETHOD.
 
 ENDCLASS.
