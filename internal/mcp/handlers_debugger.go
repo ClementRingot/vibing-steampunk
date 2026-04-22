@@ -51,6 +51,14 @@ func (s *Server) ensureDebugWSClient(ctx context.Context) error {
 		s.config.Cookies,
 	)
 
+	// Set terminal ID and IDE ID for cross-tool debugging (SAP GUI breakpoint sharing)
+	if s.config.TerminalID != "" {
+		s.debugWSClient.SetTerminalID(s.config.TerminalID)
+	}
+	if s.config.IdeID != "" {
+		s.debugWSClient.SetIdeID(s.config.IdeID)
+	}
+
 	return s.debugWSClient.Connect(ctx)
 }
 
@@ -282,4 +290,59 @@ func (s *Server) handleCallRFC(ctx context.Context, request mcp.CallToolRequest)
 	// Format result
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(fmt.Sprintf("RFC call completed.\n\nFunction: %s\nSubrc: %d\n\nResult:\n%s", function, result.Subrc, string(resultJSON))), nil
+}
+
+// --- Debug Session Handlers (WebSocket) ---
+
+func (s *Server) handleDebuggerListenWS(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// User: optional, priority: parameter > SAP_USER_DEBUG (s.config.DebugUser) > connection user
+	user, _ := request.GetArguments()["user"].(string)
+	if user == "" {
+		if s.config.DebugUser != "" {
+			user = s.config.DebugUser
+		} else {
+			user = s.config.Username // Fallback to connection user
+		}
+	}
+
+	timeout := 60 // default
+	if t, ok := request.GetArguments()["timeout"].(float64); ok && t > 0 {
+		timeout = int(t)
+		if timeout > 240 {
+			timeout = 240 // max 240 seconds
+		}
+	}
+
+	// Ensure WebSocket client is connected
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v. Ensure ZADT_VSP is deployed and SAPC/SICF are configured.", err)), nil
+	}
+
+	// Call the WebSocket Listen method which uses ZCL_VSP_DEBUG_SERVICE
+	debuggees, err := s.debugWSClient.Listen(ctx, timeout, user)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("DebuggerListen failed: %v", err)), nil
+	}
+
+	if debuggees == nil || len(debuggees) == 0 {
+		return mcp.NewToolResultText("Listener timed out - no debuggee hit a breakpoint within the timeout period."), nil
+	}
+
+	// Format debuggee information
+	var sb strings.Builder
+	sb.WriteString("Debuggee caught!\n\n")
+
+	for i, debuggee := range debuggees {
+		if i > 0 {
+			sb.WriteString("\n---\n\n")
+		}
+		fmt.Fprintf(&sb, "Debuggee ID: %s\n", debuggee.ID)
+		fmt.Fprintf(&sb, "User: %s\n", debuggee.User)
+		fmt.Fprintf(&sb, "Program: %s\n", debuggee.Program)
+		fmt.Fprintf(&sb, "Host: %s\n", debuggee.Host)
+		fmt.Fprintf(&sb, "Same Server: %v\n", debuggee.SameServer)
+	}
+
+	sb.WriteString("\nUse DebuggerAttach with the debuggee_id to attach to this session.")
+	return mcp.NewToolResultText(sb.String()), nil
 }

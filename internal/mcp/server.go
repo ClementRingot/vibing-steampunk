@@ -89,6 +89,8 @@ type Config struct {
 
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
+	IdeID      string // IDE ID for debug session isolation (SAP_IDE_ID env)
+	DebugUser  string // Optional: specific user for debugging operations (SAP_USER_DEBUG env)
 
 	// Session keep-alive interval (0 = disabled)
 	// Sends periodic pings to prevent session timeout during idle periods.

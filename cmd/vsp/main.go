@@ -145,6 +145,8 @@ func init() {
 
 	// Debugger configuration
 	rootCmd.Flags().StringVar(&cfg.TerminalID, "terminal-id", "", "SAP GUI terminal ID for cross-tool breakpoint sharing")
+	rootCmd.Flags().StringVar(&cfg.IdeID, "ide-id", "", "IDE ID for debug session isolation (from SAP GUI/ADT)")
+	rootCmd.Flags().StringVar(&cfg.DebugUser, "debug-user", "", "User for debugging operations (optional, defaults to connection user)")
 
 	// Output options
 	rootCmd.PersistentFlags().BoolVarP(&cfg.Verbose, "verbose", "v", false, "Enable verbose output to stderr")
@@ -186,6 +188,7 @@ func init() {
 
 	// Debugger configuration
 	viper.BindPFlag("terminal-id", rootCmd.Flags().Lookup("terminal-id"))
+	viper.BindPFlag("ide-id", rootCmd.Flags().Lookup("ide-id"))
 
 	// Set up environment variable mapping
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
@@ -446,6 +449,20 @@ func resolveConfig(cmd *cobra.Command) {
 	if !cmd.Flags().Changed("terminal-id") {
 		if v := viper.GetString("TERMINAL_ID"); v != "" {
 			cfg.TerminalID = v
+		}
+	}
+
+	// IDE ID for debugger: flag > SAP_IDE_ID env
+	if !cmd.Flags().Changed("ide-id") {
+		if v := viper.GetString("IDE_ID"); v != "" {
+			cfg.IdeID = v
+		}
+	}
+
+	// Debug user for debugger: flag > SAP_USER_DEBUG env
+	if !cmd.Flags().Changed("debug-user") {
+		if v := viper.GetString("USER_DEBUG"); v != "" {
+			cfg.DebugUser = v
 		}
 	}
 

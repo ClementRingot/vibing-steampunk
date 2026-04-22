@@ -37,10 +37,16 @@ func (s *Server) routeDebuggerLegacyAction(ctx context.Context, action, objectTy
 // --- Legacy REST-based Debugger Handlers (fallback) ---
 
 func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// User: optional, priority: parameter > SAP_USER_DEBUG (s.config.DebugUser) > connection user
 	user, _ := request.GetArguments()["user"].(string)
 	if user == "" {
-		user = s.config.Username // Default to connection user
+		if s.config.DebugUser != "" {
+			user = s.config.DebugUser
+		} else {
+			user = s.config.Username // Fallback to connection user
+		}
 	}
+
 	timeout := 60 // default
 	if t, ok := request.GetArguments()["timeout"].(float64); ok && t > 0 {
 		timeout = int(t)
@@ -49,9 +55,16 @@ func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolR
 		}
 	}
 
+	// Verify that TerminalID is configured (required for TERMINAL mode)
+	if s.config.TerminalID == "" {
+		return newToolResultError("TERMINAL_ID is required for debugging. Set SAP_TERMINAL_ID environment variable."), nil
+	}
+
 	result, err := s.adtClient.DebuggerListen(ctx, &adt.ListenOptions{
-		DebuggingMode:  adt.DebuggingModeUser,
+		DebuggingMode:  adt.DebuggingModeTerminal, // Use TERMINAL mode for cross-tool debugging
 		User:           user,
+		TerminalID:     s.config.TerminalID,
+		IdeID:          s.config.TerminalID, // Use same ID for IdeID
 		TimeoutSeconds: timeout,
 	})
 	if err != nil {
@@ -75,8 +88,10 @@ func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolR
 		fmt.Fprintf(&sb, "Program: %s\n", result.Debuggee.Program)
 		fmt.Fprintf(&sb, "Include: %s\n", result.Debuggee.Include)
 		fmt.Fprintf(&sb, "Line: %d\n", result.Debuggee.Line)
+		fmt.Fprintf(&sb, "Terminal ID: %s\n", result.Debuggee.TerminalID)
 		fmt.Fprintf(&sb, "Kind: %s\n", result.Debuggee.Kind)
 		fmt.Fprintf(&sb, "Attachable: %v\n", result.Debuggee.IsAttachable)
+		fmt.Fprintf(&sb, "Same Server: %v\n", result.Debuggee.IsSameServer)
 		fmt.Fprintf(&sb, "App Server: %s\n", result.Debuggee.AppServer)
 		sb.WriteString("\nUse DebuggerAttach with the debuggee_id to attach to this session.")
 		return mcp.NewToolResultText(sb.String()), nil

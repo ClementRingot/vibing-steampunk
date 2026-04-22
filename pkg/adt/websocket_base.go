@@ -1,6 +1,7 @@
 package adt
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -283,22 +284,27 @@ func (c *BaseWebSocketClient) SendDomainRequest(ctx context.Context, domain, act
 	c.pending[id] = respCh
 	c.pendingMu.Unlock()
 
-	data, err := json.Marshal(msg)
-	if err != nil {
+	// Use Encoder with SetEscapeHTML(false) to avoid & → \u0026 escaping
+	// in text values (e.g. SAP message placeholders &1, &2).
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(msg); err != nil {
 		c.pendingMu.Lock()
 		delete(c.pending, id)
 		c.pendingMu.Unlock()
 		return nil, err
 	}
+	data := buf.Bytes()
 
 	c.mu.Lock()
-	err = c.conn.WriteMessage(websocket.TextMessage, data)
+	writeErr := c.conn.WriteMessage(websocket.TextMessage, data)
 	c.mu.Unlock()
-	if err != nil {
+	if writeErr != nil {
 		c.pendingMu.Lock()
 		delete(c.pending, id)
 		c.pendingMu.Unlock()
-		return nil, err
+		return nil, writeErr
 	}
 
 	select {
