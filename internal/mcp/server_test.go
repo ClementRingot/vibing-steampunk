@@ -131,23 +131,23 @@ func TestDebuggerGetVariablesSchemaIncludesItems(t *testing.T) {
 		t.Fatal("DebuggerGetVariables tool not found")
 	}
 
-	variableIDsRaw, ok := debuggerTool.InputSchema.Properties["variable_ids"]
+	namesRaw, ok := debuggerTool.InputSchema.Properties["names"]
 	if !ok {
-		t.Fatal("variable_ids property not found in DebuggerGetVariables schema")
+		t.Fatal("names property not found in DebuggerGetVariables schema")
 	}
 
-	variableIDs, ok := variableIDsRaw.(map[string]interface{})
+	names, ok := namesRaw.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected variable_ids schema to be map[string]interface{}, got %T", variableIDsRaw)
+		t.Fatalf("expected names schema to be map[string]interface{}, got %T", namesRaw)
 	}
 
-	if variableIDs["type"] != "array" {
-		t.Fatalf("expected variable_ids type to be 'array', got %v", variableIDs["type"])
+	if names["type"] != "array" {
+		t.Fatalf("expected names type to be 'array', got %v", names["type"])
 	}
 
-	itemsRaw, ok := variableIDs["items"]
+	itemsRaw, ok := names["items"]
 	if !ok {
-		t.Fatal("variable_ids array schema is missing items")
+		t.Fatal("names array schema is missing items")
 	}
 
 	items, ok := itemsRaw.(map[string]interface{})
@@ -156,6 +156,6 @@ func TestDebuggerGetVariablesSchemaIncludesItems(t *testing.T) {
 	}
 
 	if items["type"] != "string" {
-		t.Fatalf("expected variable_ids.items.type to be 'string', got %v", items["type"])
+		t.Fatalf("expected names.items.type to be 'string', got %v", items["type"])
 	}
 }
