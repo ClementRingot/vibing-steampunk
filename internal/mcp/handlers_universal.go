@@ -82,7 +82,6 @@ func (s *Server) handleUniversalTool(ctx context.Context, request mcp.CallToolRe
 		s.routeWorkflowAction,
 		s.routeFileIOAction,
 		s.routeDebuggerAction,
-		s.routeDebuggerLegacyAction,
 		s.routeAMDPAction,
 		s.routeI18nAction,
 		s.routeUI5Action,

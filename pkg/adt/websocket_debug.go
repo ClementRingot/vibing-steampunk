@@ -318,13 +318,18 @@ func (c *DebugWebSocketClient) GetStack(ctx context.Context) ([]DebugStackFrame,
 }
 
 // GetVariables returns variable values.
-func (c *DebugWebSocketClient) GetVariables(ctx context.Context, scope string) ([]WSDebugVariable, error) {
+// scope: "system" (default), "all"
+// names: optional list of specific variable names to read (e.g. ["LV_COUNT", "LS_DATA-FIELD"])
+func (c *DebugWebSocketClient) GetVariables(ctx context.Context, scope string, names []string) ([]WSDebugVariable, error) {
 	if scope == "" {
 		scope = "system"
 	}
 
 	params := map[string]any{
 		"scope": scope,
+	}
+	if len(names) > 0 {
+		params["names"] = names
 	}
 
 	resp, err := c.sendRequest(ctx, "getVariables", params)

@@ -36,7 +36,7 @@ CLASS zcl_vsp_debug_service DEFINITION
     DATA mv_terminal_id TYPE if_tpdapi_service=>typ_terminal_id.
     DATA mv_ide_id TYPE if_tpdapi_service=>typ_ide_id.
     "! Listen mode: TERMINAL (isolated) or USER (legacy)
-    DATA mv_listen_mode TYPE string VALUE 'TERMINAL'.
+    DATA mv_listen_mode TYPE string VALUE 'USER'.
 
     " Maps our breakpoint IDs to TPDAPI breakpoint references
     TYPES:
@@ -111,6 +111,11 @@ CLASS zcl_vsp_debug_service DEFINITION
                 iv_name         TYPE string
       RETURNING VALUE(rv_value) TYPE i.
 
+    METHODS extract_param_array
+      IMPORTING iv_params          TYPE string
+                iv_name            TYPE string
+      RETURNING VALUE(rt_values)   TYPE string_table.
+
     METHODS get_debugger_service
       RETURNING VALUE(ro_service) TYPE REF TO if_tpdapi_service.
 
@@ -155,6 +160,8 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       IF lv_ext_tid IS NOT INITIAL.
         mv_terminal_id = lv_ext_tid.
         mv_ide_id = lv_ext_tid.
+        " Auto-use TERMINAL mode when external terminal ID is provided
+        mv_listen_mode = 'TERMINAL'.
       ENDIF.
     ENDIF.
     " Accept external IDE ID (separate from terminal ID, e.g. from SAP GUI/ADT)
@@ -220,18 +227,10 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       ENDTRY.
     ENDIF.
 
-    " Delete all breakpoints via TPDAPI
-    IF mo_static_bp_services IS NOT INITIAL.
-      LOOP AT mt_bp_mappings INTO DATA(ls_mapping).
-        TRY.
-            mo_static_bp_services->delete_breakpoint( i_ref_bp = ls_mapping-ref_bp ).
-          CATCH cx_tpdapi_failure cx_root ##NO_HANDLER.
-        ENDTRY.
-      ENDLOOP.
-    ENDIF.
-
-    " Cleanup stale artifacts (listeners, orphan breakpoints)
-    cleanup_stale_artifacts( ).
+    " Do NOT delete breakpoints on disconnect:
+    " The Go client creates a new WebSocket per command, so breakpoints
+    " set in one connection must persist for the listener in the next.
+    " Breakpoints are cleaned up by SAP's standard timeout mechanism.
 
     CLEAR: mv_attached_debuggee, mt_breakpoints, mt_bp_mappings,
            mo_dbg_session, mv_listener_active, mv_bp_context_set,
@@ -260,17 +259,23 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
 
     init_terminal_ids( ).
 
+    " Activate debug session for user-based breakpoints (%_SYSTEM)
+    TRY.
+        DATA(lo_service) = get_debugger_service( ).
+        lo_service->activate_session_for_ext_debug(
+          i_ide_user    = mv_debug_user
+          i_terminal_id = mv_terminal_id
+          i_ide_id      = mv_ide_id ).
+      CATCH cx_root ##NO_HANDLER.
+    ENDTRY.
+
     DATA(lo_bp_services) = get_static_bp_services( ).
 
-    " Set terminal ID at kernel level
-    IF mv_terminal_id IS NOT INITIAL.
-      set_terminal_id_epp( mv_terminal_id ).
-    ENDIF.
-
-    " Set terminal-based BP context
-    lo_bp_services->set_external_bp_context_termid(
-      i_terminal_id = mv_terminal_id
-      i_ide_id      = mv_ide_id ).
+    " Set user-based BP context (creates %_SYSTEM icfattrib entry)
+    lo_bp_services->set_external_bp_context_user(
+      i_ide_user     = mv_debug_user
+      i_request_user = mv_debug_user
+      i_ide_id       = mv_ide_id ).
 
     mv_bp_context_set = abap_true.
   ENDMETHOD.
@@ -380,25 +385,40 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
 
         mv_listener_active = abap_true.
 
+        " Use activation class directly to preserve m_context_id across
+        " start_listener -> get_waiting_debuggees (CL_TPDAPI_SERVICE creates
+        " a new instance per call, losing the context).
+        DATA lt_debuggees TYPE if_tpdapi_service=>typ_tab_debuggees.
+
         IF mv_listen_mode = 'TERMINAL'.
-          lo_service->start_listener_for_terminal_id(
-            i_terminal_id = mv_terminal_id
-            i_ide_id      = mv_ide_id
-            i_ide_user    = mv_debug_user
-            i_timeout     = lv_timeout ).
+          DATA(lo_act_tid) = cl_abdbg_act_for_attach__tid=>create_instance(
+            termid  = mv_terminal_id
+            ideid   = mv_ide_id
+            ideuser = mv_debug_user ).
+          lo_act_tid->start_listener( time_out = lv_timeout ).
+          DATA lt_raw_dbgees TYPE abdbg_act_debuggees.
+          TRY.
+              lo_act_tid->get_waiting_debuggees( IMPORTING debuggees = lt_raw_dbgees ).
+            CATCH cx_abdbg_actext_no_debuggees ##NO_HANDLER.
+          ENDTRY.
+          LOOP AT lt_raw_dbgees INTO DATA(ls_raw).
+            APPEND VALUE #( BASE CORRESPONDING #( ls_raw )
+              host           = ls_raw-appserver
+              is_same_server = COND #( WHEN ls_raw-appserver IS NOT INITIAL THEN abap_true ELSE abap_false )
+            ) TO lt_debuggees.
+          ENDLOOP.
         ELSE.
           lo_service->start_listener_for_user(
             i_request_user = lv_user
             i_ide_user     = mv_debug_user
             i_ide_id       = mv_ide_id
             i_timeout      = lv_timeout ).
+          lt_debuggees = lo_service->get_waiting_debuggees(
+            i_terminal_id  = mv_terminal_id
+            i_ide_id       = mv_ide_id
+            i_request_user = lv_user
+            i_ide_user     = mv_debug_user ).
         ENDIF.
-
-        DATA(lt_debuggees) = lo_service->get_waiting_debuggees(
-          i_terminal_id  = mv_terminal_id
-          i_ide_id       = mv_ide_id
-          i_request_user = lv_user
-          i_ide_user     = mv_debug_user ).
 
         mv_listener_active = abap_false.
 
@@ -748,6 +768,9 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       lv_scope = 'system'.
     ENDIF.
 
+    " Check for specific variable names
+    DATA(lt_names) = extract_param_array( iv_params = is_message-params iv_name = 'names' ).
+
     TRY.
         DATA(lo_data_services) = mo_dbg_session->get_data_services( ).
 
@@ -755,7 +778,37 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
         DATA lv_first TYPE abap_bool VALUE abap_true.
         lv_json = '['.
 
-        IF lv_scope = 'system' OR lv_scope = 'all'.
+        IF lt_names IS NOT INITIAL.
+          " Read specific variables by name
+          LOOP AT lt_names INTO DATA(lv_req_name).
+            TRY.
+                DATA(lv_upper_name) = to_upper( lv_req_name ).
+                DATA(lo_named_data) = lo_data_services->get_data( i_name = lv_upper_name ).
+                DATA(lv_named_val)  = lo_named_data->get_quickinfo( ).
+
+                IF lv_first = abap_false.
+                  lv_json = |{ lv_json },|.
+                ENDIF.
+                lv_first = abap_false.
+
+                lv_json = |{ lv_json }{ lv_brace_open }| &&
+                          |"name":"{ escape_json( lv_upper_name ) }",| &&
+                          |"value":"{ escape_json( lv_named_val ) }",| &&
+                          |"scope":"named"{ lv_brace_close }|.
+
+              CATCH cx_tpdapi_failure cx_root.
+                IF lv_first = abap_false.
+                  lv_json = |{ lv_json },|.
+                ENDIF.
+                lv_first = abap_false.
+                lv_json = |{ lv_json }{ lv_brace_open }| &&
+                          |"name":"{ escape_json( lv_upper_name ) }",| &&
+                          |"value":"<not found>",| &&
+                          |"scope":"named"{ lv_brace_close }|.
+            ENDTRY.
+          ENDLOOP.
+
+        ELSEIF lv_scope = 'system' OR lv_scope = 'all'.
           DATA(lt_sy_vars) = VALUE string_table(
             ( `SY-SUBRC` ) ( `SY-TABIX` ) ( `SY-INDEX` ) ( `SY-DBCNT` )
             ( `SY-UNAME` ) ( `SY-DATUM` ) ( `SY-UZEIT` ) ( `SY-CPROG` )
@@ -1112,6 +1165,23 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
+  METHOD extract_param_array.
+    " Extract JSON array values: "name":["val1","val2",...]
+    DATA lv_array TYPE string.
+    DATA(lv_pattern) = |"{ iv_name }"\\s*:\\s*\\[([^\\]]*)\\]|.
+    FIND PCRE lv_pattern IN iv_params SUBMATCHES lv_array.
+    IF sy-subrc = 0 AND lv_array IS NOT INITIAL.
+      FIND ALL OCCURRENCES OF PCRE '"([^"]*)"' IN lv_array
+        RESULTS DATA(lt_results).
+      LOOP AT lt_results INTO DATA(ls_result).
+        READ TABLE ls_result-submatches INTO DATA(ls_sub) INDEX 1.
+        IF sy-subrc = 0.
+          APPEND lv_array+ls_sub-offset(ls_sub-length) TO rt_values.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDMETHOD.
+
   METHOD escape_json.
     rv_escaped = iv_string.
     REPLACE ALL OCCURRENCES OF '\' IN rv_escaped WITH '\\'.
@@ -1134,13 +1204,17 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
     IF mv_terminal_id IS NOT INITIAL.
       RETURN.
     ENDIF.
-    TRY.
-        mv_terminal_id = cl_system_uuid=>create_uuid_c32_static( ).
-        mv_ide_id = mv_terminal_id.
-      CATCH cx_uuid_error.
-        mv_terminal_id = |VSP{ sy-uzeit }{ sy-datum }|.
-        mv_ide_id = mv_terminal_id.
-    ENDTRY.
+    " Use a deterministic terminal ID derived from the username.
+    " The Go client creates a new WebSocket connection per command,
+    " so breakpoints set in one connection must be found by the
+    " listener in the next connection. A random UUID would differ
+    " between connections, causing terminal ID mismatch.
+    DATA lv_id TYPE sysuuid_c32.
+    CONCATENATE 'VSPDEBUG' sy-uname INTO lv_id.
+    " Fill remaining positions with zeros (CHAR32, right-padded)
+    TRANSLATE lv_id USING ' 0'.
+    mv_terminal_id = lv_id.
+    mv_ide_id = mv_terminal_id.
   ENDMETHOD.
 
   METHOD cleanup_stale_artifacts.

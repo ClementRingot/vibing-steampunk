@@ -681,47 +681,44 @@ func (s *Server) registerDebuggerTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("DebuggerAttach") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerAttach",
-			mcp.WithDescription("Attach to a debuggee that has hit a breakpoint. Use the debuggee_id from DebuggerListen result."),
+			mcp.WithDescription("Attach to a debuggee that has hit a breakpoint. Uses WebSocket (ZCL_VSP_DEBUG_SERVICE) for session-persistent debugging."),
 			mcp.WithString("debuggee_id",
 				mcp.Required(),
 				mcp.Description("ID of the debuggee (from DebuggerListen result)"),
-			),
-			mcp.WithString("user",
-				mcp.Description("User for debugging (defaults to current user)"),
 			),
 		), s.handleDebuggerAttach)
 	}
 
 	if shouldRegister("DebuggerDetach") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerDetach",
-			mcp.WithDescription("Detach from the current debug session and release the debuggee."),
+			mcp.WithDescription("Detach from the current debug session and release the debuggee. Uses WebSocket (ZCL_VSP_DEBUG_SERVICE)."),
 		), s.handleDebuggerDetach)
 	}
 
 	if shouldRegister("DebuggerStep") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerStep",
-			mcp.WithDescription("Perform a step operation in the debugger."),
+			mcp.WithDescription("Perform a step operation in the debugger. Uses WebSocket (ZCL_VSP_DEBUG_SERVICE) for session-persistent stepping."),
 			mcp.WithString("step_type",
 				mcp.Required(),
-				mcp.Description("Step type: 'stepInto', 'stepOver', 'stepReturn', 'stepContinue', 'stepRunToLine', 'stepJumpToLine'"),
-			),
-			mcp.WithString("uri",
-				mcp.Description("Target URI for stepRunToLine/stepJumpToLine (e.g., '/sap/bc/adt/programs/programs/ZTEST/source/main#start=42')"),
+				mcp.Description("Step type: 'into', 'over', 'return', 'continue'"),
 			),
 		), s.handleDebuggerStep)
 	}
 
 	if shouldRegister("DebuggerGetStack") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerGetStack",
-			mcp.WithDescription("Get the current call stack during a debug session."),
+			mcp.WithDescription("Get the current call stack during a debug session. Uses WebSocket (ZCL_VSP_DEBUG_SERVICE)."),
 		), s.handleDebuggerGetStack)
 	}
 
 	if shouldRegister("DebuggerGetVariables") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerGetVariables",
-			mcp.WithDescription("Get variable values during a debug session. Use '@ROOT' to get top-level variables, or specific variable IDs to get their values."),
-			mcp.WithArray("variable_ids",
-				mcp.Description("Variable IDs to retrieve (e.g., ['@ROOT'] for top-level, or specific IDs like ['LV_COUNT', 'LS_DATA'])"),
+			mcp.WithDescription("Get variable values during a debug session. Uses WebSocket (ZCL_VSP_DEBUG_SERVICE). Defaults to system variables (SY-SUBRC, SY-TABIX, etc.), or specify variable names to read specific values."),
+			mcp.WithString("scope",
+				mcp.Description("Variable scope: 'system' (default, SY- variables), 'all' (system + locals)"),
+			),
+			mcp.WithArray("names",
+				mcp.Description("Specific variable names to read (e.g., ['LV_COUNT', 'LS_DATA', 'SY-SUBRC']). Overrides scope when provided."),
 				mcp.Items(map[string]interface{}{"type": "string"}),
 			),
 		), s.handleDebuggerGetVariables)
