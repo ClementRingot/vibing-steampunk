@@ -32,6 +32,11 @@ CLASS zcl_vsp_debug_service DEFINITION
     DATA mv_listener_active TYPE abap_bool.
     DATA mo_static_bp_services TYPE REF TO if_tpdapi_static_bp_services.
     DATA mv_bp_context_set TYPE abap_bool.
+    "! Terminal ID for session isolation (avoids user-level listener conflicts)
+    DATA mv_terminal_id TYPE if_tpdapi_service=>typ_terminal_id.
+    DATA mv_ide_id TYPE if_tpdapi_service=>typ_ide_id.
+    "! Listen mode: TERMINAL (isolated) or USER (legacy)
+    DATA mv_listen_mode TYPE string VALUE 'TERMINAL'.
 
     " Maps our breakpoint IDs to TPDAPI breakpoint references
     TYPES:
@@ -123,6 +128,13 @@ CLASS zcl_vsp_debug_service DEFINITION
       IMPORTING iv_uri            TYPE string
       RETURNING VALUE(rv_program) TYPE string.
 
+    "! Initialize terminal/IDE IDs for session isolation
+    METHODS init_terminal_ids.
+
+    "! Cleanup stale debug artifacts (breakpoints, listeners) for current user
+    METHODS cleanup_stale_artifacts.
+    METHODS set_terminal_id_epp IMPORTING iv_terminal_id TYPE sysuuid_c32.
+
 ENDCLASS.
 
 
@@ -137,6 +149,21 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
     IF mv_debug_user IS INITIAL.
       mv_debug_user = sy-uname.
     ENDIF.
+    " Accept external terminal ID (e.g. SAP GUI) for cross-tool debugging
+    IF mv_terminal_id IS INITIAL.
+      DATA(lv_ext_tid) = extract_param( iv_params = is_message-params iv_name = 'terminalId' ).
+      IF lv_ext_tid IS NOT INITIAL.
+        mv_terminal_id = lv_ext_tid.
+        mv_ide_id = lv_ext_tid.
+      ENDIF.
+    ENDIF.
+    " Accept external IDE ID (separate from terminal ID, e.g. from SAP GUI/ADT)
+    DATA(lv_ext_ide) = extract_param( iv_params = is_message-params iv_name = 'ideId' ).
+    IF lv_ext_ide IS NOT INITIAL.
+      mv_ide_id = lv_ext_ide.
+    ENDIF.
+    " Initialize terminal IDs for session isolation on first call
+    init_terminal_ids( ).
 
     CASE is_message-action.
       WHEN 'setBreakpoint'.
@@ -179,10 +206,16 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       ENDTRY.
     ENDIF.
 
-    " Stop listener
+    " Stop listener (use appropriate mode)
     IF mv_listener_active = abap_true AND mo_dbg_service IS NOT INITIAL.
       TRY.
-          mo_dbg_service->stop_listener_for_user( i_request_user = mv_debug_user ).
+          IF mv_listen_mode = 'TERMINAL' AND mv_terminal_id IS NOT INITIAL.
+            mo_dbg_service->stop_listener_for_terminal_id(
+              i_terminal_id = mv_terminal_id
+              i_ide_id      = mv_ide_id ).
+          ELSE.
+            mo_dbg_service->stop_listener_for_user( i_request_user = mv_debug_user ).
+          ENDIF.
         CATCH cx_tpdapi_failure cx_root ##NO_HANDLER.
       ENDTRY.
     ENDIF.
@@ -197,8 +230,12 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       ENDLOOP.
     ENDIF.
 
+    " Cleanup stale artifacts (listeners, orphan breakpoints)
+    cleanup_stale_artifacts( ).
+
     CLEAR: mv_attached_debuggee, mt_breakpoints, mt_bp_mappings,
-           mo_dbg_session, mv_listener_active, mv_bp_context_set.
+           mo_dbg_session, mv_listener_active, mv_bp_context_set,
+           mv_terminal_id, mv_ide_id.
   ENDMETHOD.
 
   METHOD get_debugger_service.
@@ -221,36 +258,37 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    init_terminal_ids( ).
+
     DATA(lo_bp_services) = get_static_bp_services( ).
-    lo_bp_services->set_external_bp_context_user(
-      i_ide_user     = mv_debug_user
-      i_request_user = mv_debug_user
-    ).
+
+    " Set terminal ID at kernel level
+    IF mv_terminal_id IS NOT INITIAL.
+      set_terminal_id_epp( mv_terminal_id ).
+    ENDIF.
+
+    " Set terminal-based BP context
+    lo_bp_services->set_external_bp_context_termid(
+      i_terminal_id = mv_terminal_id
+      i_ide_id      = mv_ide_id ).
+
     mv_bp_context_set = abap_true.
   ENDMETHOD.
 
   METHOD extract_program_from_uri.
-    " Extract program name from ADT URI formats:
-    " /sap/bc/adt/programs/programs/ZTEST/source/main -> ZTEST
-    " /sap/bc/adt/oo/classes/zcl_test/source/main -> ZCL_TEST
-    " /sap/bc/adt/functions/groups/zfg_test/fmodules/zfm_test/source/main -> ZFM_TEST
     DATA lv_uri TYPE string.
     DATA lt_parts TYPE TABLE OF string.
 
     lv_uri = iv_uri.
     TRANSLATE lv_uri TO UPPER CASE.
 
-    " Try to find program name between known segments
     SPLIT lv_uri AT '/' INTO TABLE lt_parts.
 
-    " Look for common patterns
     LOOP AT lt_parts INTO DATA(lv_part).
       DATA(lv_idx) = sy-tabix.
       IF lv_part = 'PROGRAMS' OR lv_part = 'CLASSES' OR lv_part = 'FMODULES'.
-        " Next part is the object name
         READ TABLE lt_parts INTO rv_program INDEX lv_idx + 1.
         IF sy-subrc = 0.
-          " For classes, append CP for class pool
           IF lv_part = 'CLASSES'.
             rv_program = |{ rv_program }================CP|.
           ENDIF.
@@ -265,6 +303,7 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
     DATA(lv_brace_close) = '}'.
     DATA lv_timeout TYPE i.
     DATA lv_user TYPE syuname.
+    DATA lv_mode TYPE string.
 
     lv_timeout = extract_param_int( iv_params = is_message-params iv_name = 'timeout' ).
     IF lv_timeout <= 0.
@@ -279,6 +318,11 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       lv_user = mv_debug_user.
     ENDIF.
 
+    lv_mode = extract_param( iv_params = is_message-params iv_name = 'mode' ).
+    IF lv_mode IS NOT INITIAL.
+      mv_listen_mode = to_upper( lv_mode ).
+    ENDIF.
+
     IF cl_tpdapi_service=>is_debugging_available( ) IS INITIAL.
       rs_response = error_response(
         iv_id      = is_message-id
@@ -290,15 +334,69 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
 
     TRY.
         DATA(lo_service) = get_debugger_service( ).
-        lo_service->activate_session_for_ext_debug( i_ide_user = mv_debug_user ).
+
+        cleanup_stale_artifacts( ).
+
+        " Pre-check for listener conflicts and auto-resolve
+        TRY.
+            IF mv_listen_mode = 'TERMINAL'.
+              lo_service->check_listener_conflict_termid(
+                i_terminal_id = mv_terminal_id
+                i_ide_id      = mv_ide_id ).
+            ELSE.
+              lo_service->check_listener_conflict_user(
+                i_user   = lv_user
+                i_ide_id = mv_ide_id ).
+            ENDIF.
+          CATCH cx_abdbg_actext_conflict_lis.
+            TRY.
+                IF mv_listen_mode = 'TERMINAL'.
+                  lo_service->stop_listener_for_terminal_id(
+                    i_terminal_id = mv_terminal_id
+                    i_ide_id      = mv_ide_id ).
+                ELSE.
+                  lo_service->stop_listener_for_user( i_request_user = lv_user ).
+                ENDIF.
+              CATCH cx_tpdapi_failure ##NO_HANDLER.
+            ENDTRY.
+          CATCH cx_tpdapi_invalid_user ##NO_HANDLER.
+        ENDTRY.
+
+        lo_service->activate_session_for_ext_debug(
+          i_ide_user    = mv_debug_user
+          i_terminal_id = mv_terminal_id
+          i_ide_id      = mv_ide_id ).
+
+        " Cross-server: set terminal ID in kernel (EPP) and activate
+        IF mv_listen_mode = 'TERMINAL'.
+          set_terminal_id_epp( mv_terminal_id ).
+          TRY.
+              cl_abdbg_act_for_attach__ideid=>activate_request_for_attach(
+                ideuser = mv_debug_user
+                ideid   = mv_ide_id ).
+            CATCH cx_root ##NO_HANDLER.
+          ENDTRY.
+        ENDIF.
 
         mv_listener_active = abap_true.
-        lo_service->start_listener_for_user(
-          i_request_user = lv_user
-          i_ide_user     = mv_debug_user
-          i_timeout      = lv_timeout ).
+
+        IF mv_listen_mode = 'TERMINAL'.
+          lo_service->start_listener_for_terminal_id(
+            i_terminal_id = mv_terminal_id
+            i_ide_id      = mv_ide_id
+            i_ide_user    = mv_debug_user
+            i_timeout     = lv_timeout ).
+        ELSE.
+          lo_service->start_listener_for_user(
+            i_request_user = lv_user
+            i_ide_user     = mv_debug_user
+            i_ide_id       = mv_ide_id
+            i_timeout      = lv_timeout ).
+        ENDIF.
 
         DATA(lt_debuggees) = lo_service->get_waiting_debuggees(
+          i_terminal_id  = mv_terminal_id
+          i_ide_id       = mv_ide_id
           i_request_user = lv_user
           i_ide_user     = mv_debug_user ).
 
@@ -338,7 +436,7 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
           rs_response = VALUE #(
             id      = is_message-id
             success = abap_true
-            data    = |{ lv_brace_open }"status":"caught","debuggees":{ lv_json }{ lv_brace_close }|
+            data    = |{ lv_brace_open }"status":"caught","debuggees":{ lv_json },"listenMode":"{ mv_listen_mode }"{ lv_brace_close }|
           ).
         ENDIF.
 
@@ -768,7 +866,6 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
           ).
           RETURN.
         ENDIF.
-        " Extract program from URI if not provided directly
         IF lv_program IS INITIAL.
           lv_program = extract_program_from_uri( lv_uri ).
         ENDIF.
@@ -936,10 +1033,8 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Find the TPDAPI breakpoint reference
     READ TABLE mt_bp_mappings WITH KEY id = lv_bp_id INTO DATA(ls_mapping).
     IF sy-subrc <> 0.
-      " Check if it exists in our internal table (might be old format)
       READ TABLE mt_breakpoints WITH KEY id = lv_bp_id TRANSPORTING NO FIELDS.
       IF sy-subrc <> 0.
         rs_response = error_response(
@@ -951,17 +1046,14 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " Delete via TPDAPI if we have a reference
     IF ls_mapping-ref_bp IS NOT INITIAL.
       TRY.
           DATA(lo_bp_services) = get_static_bp_services( ).
           lo_bp_services->delete_breakpoint( i_ref_bp = ls_mapping-ref_bp ).
         CATCH cx_tpdapi_failure cx_root INTO DATA(lx_error).
-          " Log warning but continue - we'll still clean up our tables
       ENDTRY.
     ENDIF.
 
-    " Clean up internal tables
     DELETE mt_bp_mappings WHERE id = lv_bp_id.
     DELETE mt_breakpoints WHERE id = lv_bp_id.
 
@@ -991,6 +1083,10 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       success = abap_true
       data    = |{ lv_brace_open }"sessionId":"{ mv_session_id }",| &&
                 |"user":"{ mv_debug_user }",| &&
+                |"host":"{ sy-host }",| &&
+                |"listenMode":"{ mv_listen_mode }",| &&
+                |"terminalId":"{ mv_terminal_id }",| &&
+                |"ideId":"{ mv_ide_id }",| &&
                 |"breakpointCount":{ lv_bp_count },| &&
                 |"attached":{ lv_attached },| &&
                 |"attachedDebuggee":"{ escape_json( mv_attached_debuggee ) }",| &&
@@ -1034,5 +1130,81 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
     ).
   ENDMETHOD.
 
-ENDCLASS.
+  METHOD init_terminal_ids.
+    IF mv_terminal_id IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+    TRY.
+        mv_terminal_id = cl_system_uuid=>create_uuid_c32_static( ).
+        mv_ide_id = mv_terminal_id.
+      CATCH cx_uuid_error.
+        mv_terminal_id = |VSP{ sy-uzeit }{ sy-datum }|.
+        mv_ide_id = mv_terminal_id.
+    ENDTRY.
+  ENDMETHOD.
 
+  METHOD cleanup_stale_artifacts.
+    DATA lt_bps TYPE STANDARD TABLE OF abdbg_extdbps WITH DEFAULT KEY.
+    DATA ls_bp  TYPE abdbg_extdbps.
+
+    SELECT * FROM abdbg_extdbps
+      INTO TABLE lt_bps WHERE username = sy-uname.
+
+    LOOP AT lt_bps INTO ls_bp.
+      IF ls_bp-breakpoint CP '*INCLUDE=L*VSP*'.
+        DELETE FROM abdbg_extdbps
+          WHERE username = sy-uname
+            AND bp_index = ls_bp-bp_index.
+        CALL FUNCTION 'DB_COMMIT'.
+      ENDIF.
+    ENDLOOP.
+
+    DATA lt_icf TYPE STANDARD TABLE OF icfattrib WITH DEFAULT KEY.
+    DATA ls_icf TYPE icfattrib.
+
+    SELECT * FROM icfattrib
+      INTO TABLE lt_icf
+      WHERE cusername = sy-uname.
+
+    LOOP AT lt_icf INTO ls_icf.
+      CHECK ls_icf-call_url CS 'A=X'.
+      IF mv_listen_mode = 'TERMINAL' AND mv_terminal_id IS NOT INITIAL.
+        CHECK ls_icf-url = '%_TERMINAL_ID'.
+        CHECK ls_icf-username(1) = '!'.
+        " Preserve current session entries
+        IF mv_terminal_id IS NOT INITIAL AND ls_icf-debugid CS mv_terminal_id.
+          CONTINUE.
+        ENDIF.
+      ELSE.
+        CHECK ls_icf-url = '%_SYSTEM'.
+        CHECK ls_icf-username = sy-uname.
+      ENDIF.
+      DELETE FROM icfattrib
+        WHERE username = ls_icf-username
+          AND server   = ls_icf-server
+          AND url      = ls_icf-url.
+      CALL FUNCTION 'DB_COMMIT'.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD set_terminal_id_epp.
+    CONSTANTS:
+      c_section TYPE int2 VALUE 2,
+      c_key     TYPE int2 VALUE 1.
+    DATA lv_termid TYPE sysuuid_x16.
+    lv_termid = iv_terminal_id.
+    TRY.
+        cl_epp_system_factory=>get_section( id = c_section
+          )->delete_item_by_key( key = c_key ).
+      CATCH cx_epp_error ##NO_HANDLER.
+    ENDTRY.
+    TRY.
+        cl_epp_system_factory=>get_section( c_section
+          )->set_item_by_key_as_xuuid(
+            key   = c_key
+            value = lv_termid ).
+      CATCH cx_epp_error ##NO_HANDLER.
+    ENDTRY.
+  ENDMETHOD.
+
+ENDCLASS.

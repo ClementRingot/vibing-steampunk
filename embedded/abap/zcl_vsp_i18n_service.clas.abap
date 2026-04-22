@@ -809,12 +809,9 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
                 ( zcl_vsp_utils=>json_bool( iv_key = 'has_difference' iv_value = lv_ent_diff ) )
               ) ) ).
             ENDIF.
-            " Field-level comparison
+            " Field-level comparison — auto-discover fields if not provided
             IF lt_fields IS INITIAL.
-              rs_response = zcl_vsp_utils=>build_error(
-                iv_id = is_message-id iv_code = 'MISSING_PARAM'
-                iv_message = 'fields array required for data_definition compare_translations' ).
-              RETURN.
+              lt_fields = get_cds_field_names( lv_object_name ).
             ENDIF.
             DATA lt_cmp_fld_ta TYPE sxco_t_ddef_fld_text_attributs.
             APPEND xco_cp_data_definition=>text_attribute->field->endusertext_label TO lt_cmp_fld_ta.
@@ -880,11 +877,9 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
             ) ) ).
 
           WHEN 'metadata_extension'.
+            " Auto-discover fields if not provided
             IF lt_fields IS INITIAL.
-              rs_response = zcl_vsp_utils=>build_error(
-                iv_id = is_message-id iv_code = 'MISSING_PARAM'
-                iv_message = 'fields array required for metadata_extension compare_translations' ).
-              RETURN.
+              lt_fields = get_cds_field_names( lv_object_name ).
             ENDIF.
             DATA lt_cmp_me_attr_names TYPE string_table.
             APPEND 'endusertext_label'              TO lt_cmp_me_attr_names.
@@ -1014,7 +1009,7 @@ CLASS zcl_vsp_i18n_service IMPLEMENTATION.
           WHEN OTHERS.
             rs_response = zcl_vsp_utils=>build_error(
               iv_id = is_message-id iv_code = 'UNSUPPORTED_TARGET'
-              iv_message = |compare_translations: target_type '{ lv_target_type }' not supported. Use: data_element, data_definition (with fields[]), metadata_extension (with fields[]), domain, message_class| ).
+              iv_message = |compare_translations: target_type '{ lv_target_type }' not supported. Use: data_element, data_definition, metadata_extension, domain, message_class| ).
             RETURN.
         ENDCASE.
 

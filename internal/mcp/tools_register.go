@@ -669,14 +669,14 @@ func (s *Server) registerDebuggerTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("DebuggerListen") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerListen",
-			mcp.WithDescription("Start a debug listener that waits for a debuggee to hit a breakpoint. This is a BLOCKING call that uses long-polling. Returns when a debuggee is caught, timeout occurs, or a conflict is detected."),
+			mcp.WithDescription("Start a debug listener that waits for a debuggee to hit a breakpoint. Uses WebSocket (ZCL_VSP_DEBUG_SERVICE) with TERMINAL mode for cross-tool debugging with SAP GUI. This is a BLOCKING call. Returns when a debuggee is caught, timeout occurs, or a conflict is detected."),
 			mcp.WithString("user",
-				mcp.Description("User to listen for (defaults to current user)"),
+				mcp.Description("User to listen for (optional: defaults to SAP_USER_DEBUG env or connection user)"),
 			),
 			mcp.WithNumber("timeout",
 				mcp.Description("Timeout in seconds (default: 60, max: 240)"),
 			),
-		), s.handleDebuggerListen)
+		), s.handleDebuggerListenWS)
 	}
 
 	if shouldRegister("DebuggerAttach") {
@@ -2445,7 +2445,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("language",
 				mcp.Required(),
-				mcp.Description("SAP language code (E=English, D=German, F=French, etc.)"),
+				mcp.Description("Language: SAP 1-char (E, D, F, S) or ISO 2-char (EN, DE, FR, ES)"),
 			),
 			mcp.WithString("field_name",
 				mcp.Description("Field name for data_definition/metadata_extension targets (camelCase, e.g., startDate). Required for metadata_extension. Optional for data_definition: omit to read entity-level texts, provide to read field-level texts."),
@@ -2498,7 +2498,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("language",
 				mcp.Required(),
-				mcp.Description("SAP language code (E=English, D=German, F=French, etc.)"),
+				mcp.Description("Language: SAP 1-char (E, D, F, S) or ISO 2-char (EN, DE, FR, ES)"),
 			),
 			mcp.WithString("transport",
 				mcp.Required(),
@@ -2547,12 +2547,10 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				"Requires ZADT_VSP with i18n service deployed.\n\n"+
 				"SUPPORTED TARGET TYPES:\n"+
 				"• data_element: Compares all 4 text attributes (short/medium/long/heading field labels). No extra params needed.\n"+
-				"• data_definition (CDS/DDLS): Requires 'fields' (comma-separated field names). Compares endusertext_label per field.\n"+
-				"• metadata_extension (DDLX): Requires 'fields' (comma-separated field names). Optional 'position' (default 1). "+
-				"Compares all 9 ME text attributes per field (endusertext_label, endusertext_quickinfo, ui_lineitem_label, "+
-				"ui_identification_label, consumption_dynamiclabel_label, ui_fieldgroup_label, ui_fieldgroup_grouplabel, "+
-				"ui_facet_label, consumption_valuehelpdef_label).\n\n"+
-				"TIP: Use ListTranslatableTextsXCO first to discover field names, then pass them to 'fields' parameter."),
+				"• data_definition (CDS/DDLS): Compares endusertext_label per field. 'fields' is optional — if omitted, all fields are auto-discovered.\n"+
+				"• metadata_extension (DDLX): Optional 'position' (default 1). 'fields' is optional — if omitted, all fields are auto-discovered. "+
+				"Compares all 9 ME text attributes per field.\n\n"+
+				"TIP: Accepts both SAP 1-char (E, D, S) and ISO 2-char (EN, DE, ES) language codes."),
 			mcp.WithString("target_type",
 				mcp.Required(),
 				mcp.Description("Target type: data_element, data_definition, metadata_extension"),
@@ -2563,14 +2561,14 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("source_language",
 				mcp.Required(),
-				mcp.Description("Source language SAP code (E=English, D=German, etc.)"),
+				mcp.Description("Source language: SAP 1-char (E, D, S) or ISO 2-char (EN, DE, ES)"),
 			),
 			mcp.WithString("target_language",
 				mcp.Required(),
-				mcp.Description("Target language SAP code to compare against"),
+				mcp.Description("Target language: SAP 1-char (E, D, S) or ISO 2-char (EN, DE, ES)"),
 			),
 			mcp.WithString("fields",
-				mcp.Description("Comma-separated field names for data_definition/metadata_extension targets (e.g., startDate,endDate,status). Required for these types."),
+				mcp.Description("Comma-separated field names for data_definition/metadata_extension targets (e.g., startDate,endDate,status). Optional — if omitted, all fields are auto-discovered."),
 			),
 			mcp.WithString("position",
 				mcp.Description("Position index for metadata_extension UI annotations. Default: 1"),
@@ -2604,7 +2602,7 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 				mcp.Description("Object name in uppercase (e.g., ZVACATION_REQUEST, ZSTATUS_DOMAIN, ZTEST_MSG_CLASS)"),
 			),
 			mcp.WithString("language",
-				mcp.Description("SAP language code for current text values (E=English, D=German, F=French, etc.). Default: E"),
+				mcp.Description("Language: SAP 1-char (E, D, F, S) or ISO 2-char (EN, DE, FR, ES). Default: E"),
 			),
 			mcp.WithString("text_pool_owner_type",
 				mcp.Description("Owner type for text_pool targets: 'class' (default) or 'function_group'"),

@@ -5,6 +5,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,44 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+// isoToSAPLanguage maps ISO 639-1 two-letter codes to SAP 1-char SPRAS codes.
+// If the input is already 1 character, it is returned as-is (assumed to be SAP code).
+var isoToSAPLanguage = map[string]string{
+	"EN": "E", "DE": "D", "FR": "F", "ES": "S", "IT": "I",
+	"PT": "P", "NL": "N", "JA": "J", "ZH": "1", "KO": "3",
+	"RU": "R", "PL": "L", "TR": "T", "SV": "V", "DA": "K",
+	"FI": "U", "NO": "O", "CS": "C", "HU": "H", "AR": "A",
+	"HE": "B", "TH": "2", "BG": "W", "HR": "6", "SK": "Q",
+	"SL": "5", "UK": "8", "RO": "4", "SR": "0", "EL": "G",
+}
+
+// toSAPLanguage converts an ISO 2-char or SAP 1-char language code to SAP SPRAS format.
+func toSAPLanguage(code string) string {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if len(code) <= 1 {
+		return code
+	}
+	if sap, ok := isoToSAPLanguage[code]; ok {
+		return sap
+	}
+	// Unknown 2-char code: return first char as fallback (matches CONV spras() behavior)
+	return code[:1]
+}
+
+// jsonMarshalNoEscape marshals v to indented JSON without HTML-escaping
+// characters like &, <, > (which json.Marshal escapes by default).
+func jsonMarshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	// Encode appends a trailing newline; trim it for consistency with MarshalIndent
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
 
 // routeI18nAction routes "i18n" sub-actions for XCO-based translation operations.
 func (s *Server) routeI18nAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
@@ -58,7 +97,7 @@ func (s *Server) handleGetTranslationXCO(ctx context.Context, request mcp.CallTo
 	params := adt.I18NGetParams{
 		TargetType: targetType,
 		ObjectName: strings.ToUpper(objectName),
-		Language:   strings.ToUpper(language),
+		Language:   toSAPLanguage(language),
 	}
 
 	if v, ok := request.GetArguments()["field_name"].(string); ok && v != "" {
@@ -88,7 +127,7 @@ func (s *Server) handleGetTranslationXCO(ctx context.Context, request mcp.CallTo
 		return newToolResultError(fmt.Sprintf("GetTranslationXCO failed: %v", err)), nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	jsonBytes, err := jsonMarshalNoEscape(result)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
 	}
@@ -138,7 +177,7 @@ func (s *Server) handleSetTranslationXCO(ctx context.Context, request mcp.CallTo
 	params := adt.I18NSetParams{
 		TargetType: targetType,
 		ObjectName: strings.ToUpper(objectName),
-		Language:   strings.ToUpper(language),
+		Language:   toSAPLanguage(language),
 		Transport:  strings.ToUpper(transport),
 		Texts:      texts,
 	}
@@ -171,7 +210,7 @@ func (s *Server) handleSetTranslationXCO(ctx context.Context, request mcp.CallTo
 
 	return mcp.NewToolResultText(fmt.Sprintf(
 		"Translation updated: %s/%s language=%s transport=%s (%d text(s))",
-		targetType, strings.ToUpper(objectName), strings.ToUpper(language),
+		targetType, strings.ToUpper(objectName), toSAPLanguage(language),
 		strings.ToUpper(transport), len(texts),
 	)), nil
 }
@@ -191,7 +230,7 @@ func (s *Server) handleListLanguages(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultText("No installed languages found."), nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(langs, "", "  ")
+	jsonBytes, err := jsonMarshalNoEscape(langs)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
 	}
@@ -227,8 +266,8 @@ func (s *Server) handleCompareTranslationsXCO(ctx context.Context, request mcp.C
 	params := adt.I18NCompareParams{
 		TargetType:     targetType,
 		ObjectName:     strings.ToUpper(objectName),
-		SourceLanguage: strings.ToUpper(sourceLang),
-		TargetLanguage: strings.ToUpper(targetLang),
+		SourceLanguage: toSAPLanguage(sourceLang),
+		TargetLanguage: toSAPLanguage(targetLang),
 	}
 
 	// Accept fields as comma-separated string or JSON array string
@@ -253,7 +292,7 @@ func (s *Server) handleCompareTranslationsXCO(ctx context.Context, request mcp.C
 		return newToolResultError(fmt.Sprintf("CompareTranslationsXCO failed: %v", err)), nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	jsonBytes, err := jsonMarshalNoEscape(result)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
 	}
@@ -282,7 +321,7 @@ ObjectName: strings.ToUpper(objectName),
 }
 
 if v, ok := request.GetArguments()["language"].(string); ok && v != "" {
-params.Language = strings.ToUpper(v)
+params.Language = toSAPLanguage(v)
 }
 if v, ok := request.GetArguments()["text_pool_owner_type"].(string); ok && v != "" {
 params.TextPoolOwnerType = v
@@ -293,7 +332,7 @@ if err != nil {
 return newToolResultError(fmt.Sprintf("ListTranslatableTextsXCO failed: %v", err)), nil
 }
 
-jsonBytes, err := json.MarshalIndent(result, "", "  ")
+jsonBytes, err := jsonMarshalNoEscape(result)
 if err != nil {
 return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
 }

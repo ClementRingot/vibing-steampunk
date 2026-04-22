@@ -128,7 +128,8 @@ func (c *DebugWebSocketClient) DeleteBreakpoint(ctx context.Context, breakpointI
 // --- Debugger Session Operations ---
 
 // Listen waits for a debuggee to hit a breakpoint.
-func (c *DebugWebSocketClient) Listen(ctx context.Context, timeout int) ([]DebugDebuggee, error) {
+// user parameter is optional - if empty, will use connection user.
+func (c *DebugWebSocketClient) Listen(ctx context.Context, timeout int, user string) ([]DebugDebuggee, error) {
 	if timeout <= 0 {
 		timeout = 60
 	}
@@ -136,9 +137,18 @@ func (c *DebugWebSocketClient) Listen(ctx context.Context, timeout int) ([]Debug
 		timeout = 240
 	}
 
+	// Use provided user or fall back to connection user
+	if user == "" {
+		user = c.GetUser()
+	}
+
 	params := map[string]any{
 		"timeout": timeout,
-		"user":    c.GetUser(),
+	}
+
+	// Only send user if it's not empty (ZCL_VSP_DEBUG_SERVICE will use default)
+	if user != "" {
+		params["user"] = user
 	}
 
 	// Create a context with longer timeout for listen
@@ -158,8 +168,9 @@ func (c *DebugWebSocketClient) Listen(ctx context.Context, timeout int) ([]Debug
 	}
 
 	var result struct {
-		Status    string          `json:"status"`
-		Debuggees []DebugDebuggee `json:"debuggees"`
+		Status     string          `json:"status"`
+		Debuggees  []DebugDebuggee `json:"debuggees"`
+		ListenMode string          `json:"listenMode"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, err
