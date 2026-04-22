@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.44.0] - 2026-04-22
+### Bug Fixes
+
+- **test:** Update GetVariables test for renamed variable_ids -> names ([`b2af745`](https://github.com/oisee/vibing-steampunk/commit/b2af7453d9ca1bbe404d36a074f72c42d77206b5))
+
+
+
 ## [2.43.0] - 2026-04-22
 ### Bug Fixes
 
