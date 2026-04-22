@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.43.0] - 2026-04-22
+### Bug Fixes
+
+- **i18n:** Detect original language from TADIR instead of hardcoding English ([`2e537ab`](https://github.com/oisee/vibing-steampunk/commit/2e537ab05cae34decc13d7a4fc6f8209da3bf6c4))
+
+
+### Features
+
+- **i18n:** Add entity-level CDS description support for data_definition ([`18acbfe`](https://github.com/oisee/vibing-steampunk/commit/18acbfeb7418c8ca0f6dfe473f3d9cb4d9cfae3b))
+- **i18n:** Auto-detect ME annotation position counts from DDLX source ([`b395283`](https://github.com/oisee/vibing-steampunk/commit/b3952836e11af80123756fe8abd32778b3cdb76a))
+- **i18n,debug:** Fix & encoding, add ISO language codes, auto-discover fields, debugger cross-tool support ([`39584ec`](https://github.com/oisee/vibing-steampunk/commit/39584ec15e4ee594956805e5f82bc5e0f3fb7c35))
+
+
+
 ## [2.42.0] - 2026-04-15
 ### Bug Fixes
 
