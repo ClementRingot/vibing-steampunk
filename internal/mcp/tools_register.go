@@ -669,14 +669,14 @@ func (s *Server) registerDebuggerTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("DebuggerListen") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerListen",
-			mcp.WithDescription("Start a debug listener that waits for a debuggee to hit a breakpoint. Uses WebSocket (ZCL_VSP_DEBUG_SERVICE) with TERMINAL mode for cross-tool debugging with SAP GUI. This is a BLOCKING call. Returns when a debuggee is caught, timeout occurs, or a conflict is detected."),
+			mcp.WithDescription("Start a debug listener that waits for a debuggee to hit a breakpoint. This is a BLOCKING call that uses long-polling. Returns when a debuggee is caught, timeout occurs, or a conflict is detected."),
 			mcp.WithString("user",
-				mcp.Description("User to listen for (optional: defaults to SAP_USER_DEBUG env or connection user)"),
+				mcp.Description("User to listen for (defaults to current user)"),
 			),
 			mcp.WithNumber("timeout",
 				mcp.Description("Timeout in seconds (default: 60, max: 240)"),
 			),
-		), s.handleDebuggerListenWS)
+		), s.handleDebuggerListen)
 	}
 
 	if shouldRegister("DebuggerAttach") {

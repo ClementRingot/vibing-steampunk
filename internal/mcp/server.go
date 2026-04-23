@@ -89,8 +89,6 @@ type Config struct {
 
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
-	IdeID      string // IDE ID for debug session isolation (SAP_IDE_ID env)
-	DebugUser  string // Optional: specific user for debugging operations (SAP_USER_DEBUG env)
 
 	// ReauthFunc is called on 401 to re-authenticate (e.g., re-run SAML dance).
 	// Returns fresh cookies. Passed through to adt.Config.

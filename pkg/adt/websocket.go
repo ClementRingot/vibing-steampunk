@@ -18,8 +18,6 @@ type DebugWebSocketClient struct {
 	mu         sync.RWMutex
 	isAttached bool
 	debuggeeID string
-	terminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
-	ideID      string // IDE ID for debug session isolation
 
 	// Event channel for async events (debuggee caught, etc.)
 	Events chan *DebugEvent
@@ -80,38 +78,8 @@ func NewDebugWebSocketClient(baseURL, client, user, password string, insecure bo
 	return c
 }
 
-// SetTerminalID sets the SAP GUI terminal ID for cross-tool debugging.
-// When set, all debug domain messages will include this terminal ID so that
-// ZCL_VSP_DEBUG_SERVICE uses it instead of generating a random UUID.
-func (c *DebugWebSocketClient) SetTerminalID(id string) {
-	c.terminalID = id
-}
-
-// SetIdeID sets the IDE ID for debug session isolation.
-// When set, all debug domain messages will include this IDE ID.
-func (c *DebugWebSocketClient) SetIdeID(id string) {
-	c.ideID = id
-}
-
 // sendRequest sends a request to the debug domain and waits for response.
-// Automatically injects terminalId into params if configured.
 func (c *DebugWebSocketClient) sendRequest(ctx context.Context, action string, params map[string]any) (*WSResponse, error) {
-	// Inject terminal ID and IDE ID for cross-tool debugging
-	if c.terminalID != "" || c.ideID != "" {
-		if params == nil {
-			params = make(map[string]any)
-		}
-		if c.terminalID != "" {
-			if _, exists := params["terminalId"]; !exists {
-				params["terminalId"] = c.terminalID
-			}
-		}
-		if c.ideID != "" {
-			if _, exists := params["ideId"]; !exists {
-				params["ideId"] = c.ideID
-			}
-		}
-	}
 	return c.SendDomainRequest(ctx, "debug", action, params, 65*time.Second)
 }
 
